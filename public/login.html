@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>로그인 - Specter</title>
+<link rel="icon" type="image/png" href="logo.png">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="auth-page">
+  <form id="login-form" class="auth-card">
+    <span class="brand-mark auth-logo"><img src="logo.png" alt="Specter"></span>
+    <h1>로그인</h1>
+    <label>이메일
+      <input type="email" id="email" required autocomplete="email">
+    </label>
+    <label>비밀번호
+      <input type="password" id="password" required autocomplete="current-password">
+    </label>
+    <p id="error" class="auth-error"></p>
+    <button type="submit">로그인</button>
+    <p class="auth-switch">계정이 없으신가요? <a href="signup.html">회원가입</a></p>
+  </form>
+</div>
+<script>
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  const errorEl = document.getElementById('error');
+  errorEl.textContent = '';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errorEl.textContent = data.error || '로그인에 실패했습니다.';
+      return;
+    }
+    location.href = '/';
+  } catch (err) {
+    errorEl.textContent = '서버에 연결할 수 없습니다.';
+  }
+});
+</script>
+</body>
+</html>

@@ -2,9 +2,13 @@ const chat = document.getElementById('chat');
 const form = document.getElementById('composer');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send-btn');
-const resetBtn = document.getElementById('reset-btn');
+const newProjectBtn = document.getElementById('new-project-btn');
+const projectList = document.getElementById('project-list');
+const userEmailEl = document.getElementById('user-email');
+const logoutBtn = document.getElementById('logout-btn');
 
-let history = [];
+let currentConversationId = null;
+setComposerDisabled(true); // init()이 끝나 currentConversationId가 정해지기 전까지는 전송을 막는다.
 
 function addMessage(role, text, opts = {}) {
   const el = document.createElement('div');
@@ -65,6 +69,50 @@ function startRateLimitCountdown(el, seconds, restoreText) {
   remaining -= 1;
 }
 
+async function renderProjectList() {
+  const res = await fetch('/api/conversations');
+  if (res.status === 401) return (location.href = '/login.html');
+  const conversations = await res.json();
+
+  projectList.innerHTML = '';
+  for (const c of conversations) {
+    const item = document.createElement('button');
+    item.className = `project-item${c.id === currentConversationId ? ' active' : ''}`;
+    item.textContent = c.title;
+    item.addEventListener('click', () => openConversation(c.id));
+    projectList.appendChild(item);
+  }
+  return conversations;
+}
+
+async function openConversation(id) {
+  currentConversationId = id;
+  chat.innerHTML = '';
+  const res = await fetch(`/api/conversations/${id}`);
+  if (res.status === 401) return (location.href = '/login.html');
+  const conversation = await res.json();
+  for (const t of conversation.turns) {
+    addMessage(t.role === 'user' ? 'user' : 'specter', t.content);
+  }
+  setComposerDisabled(false);
+  renderProjectList();
+  input.focus();
+}
+
+async function createNewProject() {
+  const res = await fetch('/api/conversations', { method: 'POST' });
+  if (res.status === 401) return (location.href = '/login.html');
+  const conversation = await res.json();
+  await openConversation(conversation.id);
+}
+
+newProjectBtn.addEventListener('click', createNewProject);
+
+logoutBtn.addEventListener('click', async () => {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/login.html';
+});
+
 input.addEventListener('input', () => {
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 160) + 'px';
@@ -77,18 +125,12 @@ input.addEventListener('keydown', (e) => {
   }
 });
 
-resetBtn.addEventListener('click', () => {
-  history = [];
-  chat.innerHTML = '';
-});
-
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = input.value.trim();
-  if (!text) return;
+  if (!text || !currentConversationId) return;
 
   addMessage('user', text);
-  history.push({ role: 'user', content: text });
   input.value = '';
   input.style.height = 'auto';
   setComposerDisabled(true);
@@ -100,12 +142,11 @@ form.addEventListener('submit', async (e) => {
     res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: history }),
+      body: JSON.stringify({ conversationId: currentConversationId, message: text }),
     });
     data = await res.json();
   } catch (err) {
     pending.remove();
-    history.pop();
     addMessage('specter', '서버에 연결할 수 없습니다.', { error: true });
     setComposerDisabled(false);
     input.focus();
@@ -115,7 +156,7 @@ form.addEventListener('submit', async (e) => {
   pending.remove();
 
   if (!res.ok) {
-    history.pop();
+    if (res.status === 401) return (location.href = '/login.html');
     if (data.kind === 'rate_limit') {
       const el = addMessage('specter', '', { error: true });
       startRateLimitCountdown(el, data.retryAfterSeconds || 30, text);
@@ -128,7 +169,23 @@ form.addEventListener('submit', async (e) => {
   }
 
   addMessage('specter', data.text);
-  history.push({ role: 'assistant', content: data.text });
   setComposerDisabled(false);
   input.focus();
+  renderProjectList(); // 첫 메시지 이후 제목이 바뀌므로 목록 갱신
 });
+
+async function init() {
+  const meRes = await fetch('/api/me');
+  if (meRes.status === 401) return (location.href = '/login.html');
+  const me = await meRes.json();
+  userEmailEl.textContent = me.email;
+
+  const conversations = await renderProjectList();
+  if (conversations.length === 0) {
+    await createNewProject();
+  } else {
+    await openConversation(conversations[0].id);
+  }
+}
+
+init();

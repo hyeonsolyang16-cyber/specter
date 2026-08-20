@@ -1,13 +1,21 @@
 require('dotenv').config();
 const express = require('express');
+const session = require('express-session');
+const bcrypt = require('bcryptjs');
 const { GoogleGenAI, ApiError } = require('@google/genai');
 const { SYSTEM_PROMPT } = require('./system-prompt');
+const store = require('./store');
 
 const PORT = process.env.PORT || 3210;
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').toLowerCase();
 
 if (!process.env.GEMINI_API_KEY) {
   console.error('GEMINI_API_KEY가 설정되지 않았습니다. .env 파일을 확인하세요.');
+  process.exit(1);
+}
+if (!process.env.SESSION_SECRET) {
+  console.error('SESSION_SECRET이 설정되지 않았습니다. .env 파일을 확인하세요.');
   process.exit(1);
 }
 
@@ -15,15 +23,98 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: { maxAge: 1000 * 60 * 60 * 24 * 7 },
+  })
+);
+
+function requireAuth(req, res, next) {
+  if (!req.session.userId) return res.status(401).json({ error: '로그인이 필요합니다.' });
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.session.userId) return res.status(401).json({ error: '로그인이 필요합니다.' });
+  if (!req.session.isAdmin) return res.status(403).json({ error: '관리자만 접근할 수 있습니다.' });
+  next();
+}
+
+// 로그인 안 된 사용자가 채팅/관리자 페이지로 바로 들어오면 로그인 화면으로 보낸다.
+app.get('/', (req, res, next) => {
+  if (!req.session.userId) return res.redirect('/login.html');
+  next();
+});
+app.get('/admin.html', (req, res, next) => {
+  if (!req.session.userId) return res.redirect('/login.html');
+  if (!req.session.isAdmin) return res.redirect('/');
+  next();
+});
+
 app.use(express.static('public'));
 
-// 프론트엔드는 {role: 'user'|'assistant', content: string} 형태로 보내는데,
-// Gemini는 role을 'user'|'model'로 요구하고 각 메시지를 parts 배열로 감싼다.
-function toGeminiContents(messages) {
-  return messages.map((m) => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
-  }));
+app.post('/api/signup', async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password || password.length < 8) {
+    return res.status(400).json({ error: '이메일과 8자 이상의 비밀번호를 입력하세요.' });
+  }
+  if (store.findUserByEmail(email)) {
+    return res.status(409).json({ error: '이미 가입된 이메일입니다.' });
+  }
+  const passwordHash = await bcrypt.hash(password, 10);
+  const user = store.createUser(email, passwordHash);
+  req.session.userId = user.id;
+  req.session.isAdmin = email.toLowerCase() === ADMIN_EMAIL;
+  res.json({ email: user.email, isAdmin: req.session.isAdmin });
+});
+
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body || {};
+  const user = store.findUserByEmail(email || '');
+  if (!user || !(await bcrypt.compare(password || '', user.passwordHash))) {
+    return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' });
+  }
+  req.session.userId = user.id;
+  req.session.isAdmin = user.email.toLowerCase() === ADMIN_EMAIL;
+  res.json({ email: user.email, isAdmin: req.session.isAdmin });
+});
+
+app.post('/api/logout', (req, res) => {
+  req.session.destroy(() => res.json({ ok: true }));
+});
+
+app.get('/api/me', (req, res) => {
+  if (!req.session.userId) return res.status(401).json({ error: '로그인이 필요합니다.' });
+  const user = store.findUserById(req.session.userId);
+  res.json({ email: user?.email, isAdmin: !!req.session.isAdmin });
+});
+
+app.get('/api/admin/conversations', requireAdmin, (req, res) => {
+  res.json(store.getAllConversationsWithEmails());
+});
+
+app.post('/api/conversations', requireAuth, (req, res) => {
+  const conversation = store.createConversation(req.session.userId);
+  res.json(conversation);
+});
+
+app.get('/api/conversations', requireAuth, (req, res) => {
+  res.json(store.listConversations(req.session.userId));
+});
+
+app.get('/api/conversations/:id', requireAuth, (req, res) => {
+  const conversation = store.getConversation(req.session.userId, req.params.id);
+  if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  res.json(conversation);
+});
+
+// 저장된 turns({role: 'user'|'model', content})를 Gemini가 요구하는
+// {role, parts: [{text}]} 형태로 감싼다.
+function toGeminiContents(turns) {
+  return turns.map((t) => ({ role: t.role, parts: [{ text: t.content }] }));
 }
 
 // Gemini는 잘못된 키를 401이 아니라 400(INVALID_ARGUMENT)으로 반환하고,
@@ -37,18 +128,25 @@ function isInvalidApiKey(err) {
   }
 }
 
-app.post('/api/chat', async (req, res) => {
-  const { messages } = req.body;
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return res.status(400).json({ error: 'messages 배열이 필요합니다.' });
+app.post('/api/chat', requireAuth, async (req, res) => {
+  const { conversationId, message } = req.body || {};
+  if (!conversationId || typeof message !== 'string' || !message.trim()) {
+    return res.status(400).json({ error: 'conversationId와 message가 필요합니다.' });
+  }
+  const conversation = store.getConversation(req.session.userId, conversationId);
+  if (!conversation) {
+    return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
   }
 
   try {
     const response = await ai.models.generateContent({
       model: MODEL,
-      contents: toGeminiContents(messages),
+      contents: toGeminiContents([...conversation.turns, { role: 'user', content: message }]),
       config: { systemInstruction: SYSTEM_PROMPT, maxOutputTokens: 4096 },
     });
+
+    store.appendTurn(req.session.userId, conversationId, 'user', message);
+    store.appendTurn(req.session.userId, conversationId, 'model', response.text);
 
     res.json({ text: response.text });
   } catch (err) {

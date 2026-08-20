@@ -10,31 +10,33 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="app">
-  <header class="app-header">
-    <div class="brand">
-      <span class="brand-mark">
-        <img src="logo.png" alt="Specter">
-      </span>
-      <div>
-        <h1>Specter</h1>
-        <p class="tagline">동의하기 전에 먼저 반박합니다</p>
-      </div>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <span class="brand-mark"><img src="logo.png" alt="Specter"></span>
+      <h1>Specter</h1>
     </div>
-    <button id="reset-btn" class="reset-btn" title="대화 초기화">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 1 3 6.7M3 12v6m0-6h6"/></svg>
-      <span>초기화</span>
+    <button id="new-project-btn" class="new-project-btn">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      새 프로젝트
     </button>
-  </header>
+    <nav id="project-list" class="project-list"></nav>
+    <div class="sidebar-footer">
+      <span id="user-email" class="user-email"></span>
+      <button id="logout-btn" class="logout-link">로그아웃</button>
+    </div>
+  </aside>
 
-  <main id="chat" class="chat"></main>
+  <div class="app">
+    <main id="chat" class="chat"></main>
 
-  <form id="composer" class="composer">
-    <textarea id="input" placeholder="주장이나 계획을 입력하세요…" rows="1"></textarea>
-    <button type="submit" id="send-btn" aria-label="전송">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m0 0-6-6m6 6-6 6"/></svg>
-    </button>
-  </form>
+    <form id="composer" class="composer">
+      <textarea id="input" placeholder="주장이나 계획을 입력하세요…" rows="1"></textarea>
+      <button type="submit" id="send-btn" aria-label="전송">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m0 0-6-6m6 6-6 6"/></svg>
+      </button>
+    </form>
+  </div>
 </div>
 <script src="app.js"></script>
 </body>
