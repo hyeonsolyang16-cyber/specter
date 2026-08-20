@@ -1,0 +1,14 @@
+{
+  "name": "Specter",
+  "short_name": "Specter",
+  "description": "현실적인 판단으로 업무를 돕는 AI",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#DAD7CD",
+  "theme_color": "#344E41",
+  "icons": [
+    { "src": "/logo.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" },
+    { "src": "/logo.png", "sizes": "1024x1024", "type": "image/png", "purpose": "maskable" }
+  ]
+}

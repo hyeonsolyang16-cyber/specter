@@ -65,11 +65,11 @@ app.post('/api/signup', async (req, res) => {
   if (!email || !password || password.length < 8) {
     return res.status(400).json({ error: '이메일과 8자 이상의 비밀번호를 입력하세요.' });
   }
-  if (store.findUserByEmail(email)) {
+  if (await store.findUserByEmail(email)) {
     return res.status(409).json({ error: '이미 가입된 이메일입니다.' });
   }
   const passwordHash = await bcrypt.hash(password, 10);
-  const user = store.createUser(email, passwordHash);
+  const user = await store.createUser(email, passwordHash);
   req.session.userId = user.id;
   req.session.isAdmin = email.toLowerCase() === ADMIN_EMAIL;
   res.json({ email: user.email, isAdmin: req.session.isAdmin });
@@ -77,7 +77,7 @@ app.post('/api/signup', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body || {};
-  const user = store.findUserByEmail(email || '');
+  const user = await store.findUserByEmail(email || '');
   if (!user || !(await bcrypt.compare(password || '', user.passwordHash))) {
     return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' });
   }
@@ -90,21 +90,20 @@ app.post('/api/logout', (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
 
-app.get('/api/me', (req, res) => {
-  if (!req.session.userId) return res.status(401).json({ error: '로그인이 필요합니다.' });
-  const user = store.findUserById(req.session.userId);
-  res.json({ email: user?.email, isAdmin: !!req.session.isAdmin, settings: store.getSettings(req.session.userId) });
+app.get('/api/me', requireAuth, async (req, res) => {
+  const user = await store.findUserById(req.session.userId);
+  res.json({ email: user?.email, isAdmin: !!req.session.isAdmin, settings: await store.getSettings(req.session.userId) });
 });
 
 const VALID_THINKING_LEVELS = ['minimal', 'low', 'medium', 'high'];
 const VALID_INTENSITIES = ['mild', 'strong'];
 const VALID_THEMES = ['light', 'dark'];
 
-app.get('/api/settings', requireAuth, (req, res) => {
-  res.json(store.getSettings(req.session.userId));
+app.get('/api/settings', requireAuth, async (req, res) => {
+  res.json(await store.getSettings(req.session.userId));
 });
 
-app.post('/api/settings', requireAuth, (req, res) => {
+app.post('/api/settings', requireAuth, async (req, res) => {
   const { thinkingLevel, pushbackIntensity, theme } = req.body || {};
   const patch = {};
   if (thinkingLevel !== undefined) {
@@ -125,7 +124,7 @@ app.post('/api/settings', requireAuth, (req, res) => {
     }
     patch.theme = theme;
   }
-  res.json(store.updateSettings(req.session.userId, patch));
+  res.json(await store.updateSettings(req.session.userId, patch));
 });
 
 app.post('/api/account/password', requireAuth, async (req, res) => {
@@ -133,40 +132,54 @@ app.post('/api/account/password', requireAuth, async (req, res) => {
   if (!newPassword || newPassword.length < 8) {
     return res.status(400).json({ error: '새 비밀번호는 8자 이상이어야 합니다.' });
   }
-  const user = store.findUserById(req.session.userId);
+  const user = await store.findUserById(req.session.userId);
   if (!user || !(await bcrypt.compare(currentPassword || '', user.passwordHash))) {
     return res.status(401).json({ error: '현재 비밀번호가 올바르지 않습니다.' });
   }
   const newHash = await bcrypt.hash(newPassword, 10);
-  store.updatePasswordHash(user.id, newHash);
+  await store.updatePasswordHash(user.id, newHash);
   res.json({ ok: true });
 });
 
-app.get('/api/admin/conversations', requireAdmin, (req, res) => {
-  res.json(store.getAllConversationsWithEmails());
+app.get('/api/admin/conversations', requireAdmin, async (req, res) => {
+  res.json(await store.getAllConversationsWithEmails());
 });
 
-app.post('/api/conversations', requireAuth, (req, res) => {
+app.post('/api/conversations', requireAuth, async (req, res) => {
   const { category } = req.body || {};
-  const conversation = store.createConversation(req.session.userId, category);
+  const conversation = await store.createConversation(req.session.userId, category);
   res.json(conversation);
 });
 
-app.get('/api/conversations', requireAuth, (req, res) => {
-  res.json(store.listConversations(req.session.userId));
+app.get('/api/conversations', requireAuth, async (req, res) => {
+  res.json(await store.listConversations(req.session.userId));
 });
 
-app.get('/api/conversations/:id', requireAuth, (req, res) => {
-  const conversation = store.getConversation(req.session.userId, req.params.id);
+app.get('/api/conversations/:id', requireAuth, async (req, res) => {
+  const conversation = await store.getConversation(req.session.userId, req.params.id);
   if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
   res.json(conversation);
 });
 
-app.patch('/api/conversations/:id/category', requireAuth, (req, res) => {
+app.patch('/api/conversations/:id/category', requireAuth, async (req, res) => {
   const { category } = req.body || {};
-  const conversation = store.setConversationCategory(req.session.userId, req.params.id, category);
+  const conversation = await store.setConversationCategory(req.session.userId, req.params.id, category);
   if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
   res.json(conversation);
+});
+
+app.patch('/api/conversations/:id/title', requireAuth, async (req, res) => {
+  const { title } = req.body || {};
+  if (!title || !title.trim()) return res.status(400).json({ error: 'title이 필요합니다.' });
+  const conversation = await store.renameConversation(req.session.userId, req.params.id, title.trim().slice(0, 60));
+  if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  res.json(conversation);
+});
+
+app.delete('/api/conversations/:id', requireAuth, async (req, res) => {
+  const deleted = await store.deleteConversation(req.session.userId, req.params.id);
+  if (!deleted) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  res.json({ ok: true });
 });
 
 // 저장된 turns({role: 'user'|'model', content})를 Gemini가 요구하는
@@ -191,13 +204,13 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   if (!conversationId || typeof message !== 'string' || !message.trim()) {
     return res.status(400).json({ error: 'conversationId와 message가 필요합니다.' });
   }
-  const conversation = store.getConversation(req.session.userId, conversationId);
+  const conversation = await store.getConversation(req.session.userId, conversationId);
   if (!conversation) {
     return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
   }
 
   try {
-    const settings = store.getSettings(req.session.userId);
+    const settings = await store.getSettings(req.session.userId);
     const response = await ai.models.generateContent({
       model: MODEL,
       contents: toGeminiContents([...conversation.turns, { role: 'user', content: message }]),
@@ -208,8 +221,8 @@ app.post('/api/chat', requireAuth, async (req, res) => {
       },
     });
 
-    store.appendTurn(req.session.userId, conversationId, 'user', message);
-    store.appendTurn(req.session.userId, conversationId, 'model', response.text);
+    await store.appendTurn(req.session.userId, conversationId, 'user', message);
+    await store.appendTurn(req.session.userId, conversationId, 'model', response.text);
 
     res.json({ text: response.text });
   } catch (err) {

@@ -6,9 +6,41 @@ const newProjectBtn = document.getElementById('new-project-btn');
 const projectList = document.getElementById('project-list');
 const userEmailEl = document.getElementById('user-email');
 const logoutBtn = document.getElementById('logout-btn');
+const installBtn = document.getElementById('install-btn');
 
 let currentConversationId = null;
 setComposerDisabled(true); // init()이 끝나 currentConversationId가 정해지기 전까지는 전송을 막는다.
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  installBtn.hidden = false;
+});
+window.addEventListener('appinstalled', () => {
+  installBtn.hidden = true;
+});
+
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+if (isIOS && !isStandalone) installBtn.hidden = false;
+
+installBtn.addEventListener('click', async () => {
+  if (deferredInstallPrompt) {
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    installBtn.hidden = true;
+    return;
+  }
+  if (isIOS) {
+    alert('공유 버튼(□↑) 클릭 → "홈 화면에 추가"를 선택하면 앱처럼 설치됩니다.');
+  }
+});
 
 function addMessage(role, text, opts = {}) {
   const el = document.createElement('div');
@@ -95,7 +127,12 @@ async function renderProjectList() {
       const item = document.createElement('button');
       item.className = `project-item${c.id === currentConversationId ? ' active' : ''}`;
       item.textContent = c.title;
+      item.title = '더블클릭하면 이름을 바꿀 수 있습니다';
       item.addEventListener('click', () => openConversation(c.id));
+      item.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        startTitleEdit(row, c);
+      });
 
       const editBtn = document.createElement('button');
       editBtn.className = 'project-category-edit';
@@ -106,8 +143,27 @@ async function renderProjectList() {
         startCategoryEdit(row, c);
       });
 
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'project-category-edit';
+      deleteBtn.title = '프로젝트 삭제';
+      deleteBtn.textContent = '✕';
+      deleteBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm(`"${c.title}" 프로젝트를 삭제할까요? 되돌릴 수 없습니다.`)) return;
+        await fetch(`/api/conversations/${c.id}`, { method: 'DELETE' });
+        if (c.id === currentConversationId) {
+          currentConversationId = null;
+          const remaining = await renderProjectList();
+          if (remaining.length === 0) await createNewProject();
+          else await openConversation(remaining[0].id);
+        } else {
+          renderProjectList();
+        }
+      });
+
       row.appendChild(item);
       row.appendChild(editBtn);
+      row.appendChild(deleteBtn);
       projectList.appendChild(row);
     }
   }
@@ -130,6 +186,33 @@ function startCategoryEdit(row, conversation) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ category: input.value.trim() }),
     });
+    renderProjectList();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') save();
+    if (e.key === 'Escape') renderProjectList();
+  });
+  input.addEventListener('blur', save);
+}
+
+function startTitleEdit(row, conversation) {
+  row.innerHTML = '';
+  const input = document.createElement('input');
+  input.className = 'project-category-input';
+  input.value = conversation.title;
+  row.appendChild(input);
+  input.focus();
+  input.select();
+
+  const save = async () => {
+    const title = input.value.trim();
+    if (title) {
+      await fetch(`/api/conversations/${conversation.id}/title`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+    }
     renderProjectList();
   };
   input.addEventListener('keydown', (e) => {
