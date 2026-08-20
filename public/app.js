@@ -8,7 +8,7 @@ let history = [];
 
 function addMessage(role, text, opts = {}) {
   const el = document.createElement('div');
-  el.className = `msg ${role}${opts.error ? ' error' : ''}${opts.billing ? ' billing' : ''}`;
+  el.className = `msg ${role}${opts.error ? ' error' : ''}`;
   if (role === 'specter') {
     const label = document.createElement('span');
     label.className = 'label';
@@ -121,10 +121,7 @@ form.addEventListener('submit', async (e) => {
       startRateLimitCountdown(el, data.retryAfterSeconds || 30, text);
       return; // 컴포저 재활성화는 카운트다운이 끝난 뒤 startRateLimitCountdown이 처리한다.
     }
-    addMessage('specter', data.error || '알 수 없는 오류가 발생했습니다.', {
-      error: true,
-      billing: data.kind === 'billing_exhausted',
-    });
+    addMessage('specter', data.error || '알 수 없는 오류가 발생했습니다.', { error: true });
     setComposerDisabled(false);
     input.focus();
     return;

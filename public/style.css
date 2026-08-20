@@ -10,9 +10,6 @@
   --accent-strong: #588157;
   --accent-soft: rgba(88, 129, 87, 0.18);
   --danger: #c96a4e;
-  --danger-soft: rgba(201, 106, 78, 0.14);
-  --warning: #cf9a4a;
-  --warning-soft: rgba(207, 154, 74, 0.12);
   --font: "Pretendard Variable", -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
 }
 
@@ -145,8 +142,6 @@ body {
 
 .msg.error { border-left-color: var(--danger); }
 .msg.error .label, .msg.error > span:last-child { color: var(--danger); }
-.msg.billing { border-left-color: var(--warning); background: var(--warning-soft); }
-.msg.billing .label, .msg.billing > span:last-child { color: var(--warning); }
 
 .dots { display: inline-flex; gap: 4px; align-items: center; height: 14px; }
 .dots span {

@@ -6,9 +6,7 @@ services:
     buildCommand: npm install
     startCommand: npm start
     envVars:
-      - key: ANTHROPIC_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
-      - key: SPECTER_MODEL
-        value: claude-sonnet-5
-      - key: SPECTER_EFFORT
-        value: medium
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash

@@ -1,14 +1,14 @@
 {
   "name": "specter",
   "version": "1.0.0",
-  "description": "Specter - a critical-thinking AI assistant built on the Claude API",
+  "description": "Specter - a critical-thinking AI assistant built on the Gemini API free tier",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
+    "@google/genai": "^2.18.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.1"
   }
