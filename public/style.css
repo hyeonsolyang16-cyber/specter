@@ -140,11 +140,17 @@ html, body {
 
 .sidebar-footer {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 8px;
   padding: 10px 6px 0;
   border-top: 1px solid var(--border);
   margin-top: 10px;
+}
+
+.sidebar-footer-links {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .logout-link {
@@ -155,6 +161,7 @@ html, body {
   font-family: inherit;
   cursor: pointer;
   text-decoration: underline;
+  white-space: nowrap;
 }
 .logout-link:hover { color: var(--text); }
 

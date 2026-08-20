@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Specter</title>
 <link rel="icon" type="image/png" href="logo.png">
+<meta property="og:title" content="Specter">
+<meta property="og:description" content="동의하기 전에 먼저 반박하는 AI">
+<meta property="og:image" content="https://specter-js8n.onrender.com/og-image.png">
+<meta property="og:url" content="https://specter-js8n.onrender.com">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css">
 <link rel="stylesheet" href="style.css">
@@ -23,8 +28,10 @@
     <nav id="project-list" class="project-list"></nav>
     <div class="sidebar-footer">
       <span id="user-email" class="user-email"></span>
-      <a href="/settings.html" class="logout-link">설정</a>
-      <button id="logout-btn" class="logout-link">로그아웃</button>
+      <div class="sidebar-footer-links">
+        <a href="/settings.html" class="logout-link">설정</a>
+        <button id="logout-btn" class="logout-link">로그아웃</button>
+      </div>
     </div>
   </aside>
 
@@ -32,7 +39,7 @@
     <main id="chat" class="chat"></main>
 
     <form id="composer" class="composer">
-      <textarea id="input" placeholder="주장이나 계획을 입력하세요…" rows="1"></textarea>
+      <textarea id="input" placeholder="대화를 시작해보세요" rows="1"></textarea>
       <button type="submit" id="send-btn" aria-label="전송">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m0 0-6-6m6 6-6 6"/></svg>
       </button>
