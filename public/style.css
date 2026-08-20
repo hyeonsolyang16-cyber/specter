@@ -240,6 +240,7 @@ html, body {
 }
 
 .msg {
+  position: relative;
   max-width: 80%;
   padding: 12px 16px;
   border-radius: 14px;
@@ -249,6 +250,23 @@ html, body {
   word-break: break-word;
   animation: rise 0.28s cubic-bezier(0.2, 0.7, 0.3, 1);
 }
+
+.copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 3px 5px;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.msg.specter:hover .copy-btn { opacity: 1; }
+.copy-btn:hover { background: var(--accent-soft); color: var(--text); }
 
 @keyframes rise {
   from { opacity: 0; transform: translateY(6px); }
@@ -281,7 +299,7 @@ html, body {
 }
 
 .msg.error { border-left-color: var(--danger); }
-.msg.error .label, .msg.error > span:last-child { color: var(--danger); }
+.msg.error .label, .msg.error .msg-body { color: var(--danger); }
 
 .dots { display: inline-flex; gap: 4px; align-items: center; height: 14px; }
 .dots span {
@@ -337,6 +355,7 @@ html, body {
   transition: background 0.15s ease, transform 0.1s ease;
 }
 #send-btn svg { width: 18px; height: 18px; stroke: var(--on-accent); fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+#send-btn svg rect { fill: var(--on-accent); stroke: none; }
 #send-btn:hover:not(:disabled) { background: var(--accent); }
 #send-btn:active:not(:disabled) { transform: scale(0.94); }
 #send-btn:disabled { opacity: 0.4; cursor: not-allowed; }

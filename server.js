@@ -209,9 +209,17 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
   }
 
+  let aborted = false;
+  req.on('close', () => {
+    aborted = true;
+  });
+  res.on('error', () => {
+    aborted = true;
+  });
+
   try {
     const settings = await store.getSettings(req.session.userId);
-    const response = await ai.models.generateContent({
+    const stream = await ai.models.generateContentStream({
       model: MODEL,
       contents: toGeminiContents([...conversation.turns, { role: 'user', content: message }]),
       config: {
@@ -221,11 +229,33 @@ app.post('/api/chat', requireAuth, async (req, res) => {
       },
     });
 
-    await store.appendTurn(req.session.userId, conversationId, 'user', message);
-    await store.appendTurn(req.session.userId, conversationId, 'model', response.text);
+    // 첫 청크를 헤더 커밋 전에 받아본다 — 레이트리밋/키 오류 같은 실패는
+    // 보통 여기서 던져지므로, 그 경우엔 기존 JSON 에러 응답을 그대로 쓸 수 있다.
+    const iterator = stream[Symbol.asyncIterator]();
+    let result = await iterator.next();
 
-    res.json({ text: response.text });
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    let fullText = '';
+    while (!result.done) {
+      if (aborted) break;
+      if (result.value?.text) {
+        fullText += result.value.text;
+        res.write(result.value.text);
+      }
+      result = await iterator.next();
+    }
+
+    if (fullText) {
+      await store.appendTurn(req.session.userId, conversationId, 'user', message);
+      await store.appendTurn(req.session.userId, conversationId, 'model', fullText);
+    }
+    res.end();
   } catch (err) {
+    if (res.headersSent) {
+      // 스트리밍이 이미 시작된 뒤라 일반 텍스트만 보낼 수 있다 — 여기서 끊는다.
+      res.end();
+      return;
+    }
     if (err instanceof ApiError && err.status === 429) {
       // 무료 티어 할당량(분당/일일)은 시간이 지나면 자동으로 초기화된다.
       return res.status(429).json({
