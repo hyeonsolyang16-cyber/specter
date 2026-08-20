@@ -100,6 +100,35 @@ html, body {
 .project-item:hover { background: var(--accent-soft); color: var(--text); }
 .project-item.active { background: var(--surface); color: var(--text); font-weight: 600; }
 
+.project-row { display: flex; align-items: center; gap: 2px; }
+.project-row .project-item { flex: 1; }
+
+.project-category-edit {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+}
+.project-row:hover .project-category-edit { opacity: 1; }
+.project-category-edit:hover { background: var(--accent-soft); color: var(--text); }
+
+.project-category-input {
+  flex: 1;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--surface);
+  color: var(--text);
+}
+.project-category-input:focus { outline: none; }
+
 .project-category {
   font-size: 11px;
   font-weight: 700;

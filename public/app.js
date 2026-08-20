@@ -89,14 +89,54 @@ async function renderProjectList() {
     projectList.appendChild(heading);
 
     for (const c of items) {
+      const row = document.createElement('div');
+      row.className = 'project-row';
+
       const item = document.createElement('button');
       item.className = `project-item${c.id === currentConversationId ? ' active' : ''}`;
       item.textContent = c.title;
       item.addEventListener('click', () => openConversation(c.id));
-      projectList.appendChild(item);
+
+      const editBtn = document.createElement('button');
+      editBtn.className = 'project-category-edit';
+      editBtn.title = '카테고리 변경';
+      editBtn.textContent = '⚑';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        startCategoryEdit(row, c);
+      });
+
+      row.appendChild(item);
+      row.appendChild(editBtn);
+      projectList.appendChild(row);
     }
   }
   return conversations;
+}
+
+function startCategoryEdit(row, conversation) {
+  row.innerHTML = '';
+  const input = document.createElement('input');
+  input.className = 'project-category-input';
+  input.value = conversation.category === '미분류' ? '' : conversation.category;
+  input.placeholder = '카테고리 (비워두면 미분류)';
+  row.appendChild(input);
+  input.focus();
+  input.select();
+
+  const save = async () => {
+    await fetch(`/api/conversations/${conversation.id}/category`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category: input.value.trim() }),
+    });
+    renderProjectList();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') save();
+    if (e.key === 'Escape') renderProjectList();
+  });
+  input.addEventListener('blur', save);
 }
 
 async function openConversation(id) {
@@ -114,12 +154,7 @@ async function openConversation(id) {
 }
 
 async function createNewProject() {
-  const category = prompt('카테고리를 입력하세요 (비워두면 미분류)', '') || undefined;
-  const res = await fetch('/api/conversations', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ category }),
-  });
+  const res = await fetch('/api/conversations', { method: 'POST' });
   if (res.status === 401) return (location.href = '/login.html');
   const conversation = await res.json();
   await openConversation(conversation.id);
