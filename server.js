@@ -3,7 +3,7 @@ const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const { GoogleGenAI, ApiError } = require('@google/genai');
-const { SYSTEM_PROMPT } = require('./system-prompt');
+const { buildSystemPrompt } = require('./system-prompt');
 const store = require('./store');
 
 const PORT = process.env.PORT || 3210;
@@ -53,6 +53,10 @@ app.get('/admin.html', (req, res, next) => {
   if (!req.session.isAdmin) return res.redirect('/');
   next();
 });
+app.get('/settings.html', (req, res, next) => {
+  if (!req.session.userId) return res.redirect('/login.html');
+  next();
+});
 
 app.use(express.static('public'));
 
@@ -89,7 +93,53 @@ app.post('/api/logout', (req, res) => {
 app.get('/api/me', (req, res) => {
   if (!req.session.userId) return res.status(401).json({ error: '로그인이 필요합니다.' });
   const user = store.findUserById(req.session.userId);
-  res.json({ email: user?.email, isAdmin: !!req.session.isAdmin });
+  res.json({ email: user?.email, isAdmin: !!req.session.isAdmin, settings: store.getSettings(req.session.userId) });
+});
+
+const VALID_THINKING_LEVELS = ['minimal', 'low', 'medium', 'high'];
+const VALID_INTENSITIES = ['mild', 'strong'];
+const VALID_THEMES = ['light', 'dark'];
+
+app.get('/api/settings', requireAuth, (req, res) => {
+  res.json(store.getSettings(req.session.userId));
+});
+
+app.post('/api/settings', requireAuth, (req, res) => {
+  const { thinkingLevel, pushbackIntensity, theme } = req.body || {};
+  const patch = {};
+  if (thinkingLevel !== undefined) {
+    if (!VALID_THINKING_LEVELS.includes(thinkingLevel)) {
+      return res.status(400).json({ error: '유효하지 않은 thinkingLevel 입니다.' });
+    }
+    patch.thinkingLevel = thinkingLevel;
+  }
+  if (pushbackIntensity !== undefined) {
+    if (!VALID_INTENSITIES.includes(pushbackIntensity)) {
+      return res.status(400).json({ error: '유효하지 않은 pushbackIntensity 입니다.' });
+    }
+    patch.pushbackIntensity = pushbackIntensity;
+  }
+  if (theme !== undefined) {
+    if (!VALID_THEMES.includes(theme)) {
+      return res.status(400).json({ error: '유효하지 않은 theme 입니다.' });
+    }
+    patch.theme = theme;
+  }
+  res.json(store.updateSettings(req.session.userId, patch));
+});
+
+app.post('/api/account/password', requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!newPassword || newPassword.length < 8) {
+    return res.status(400).json({ error: '새 비밀번호는 8자 이상이어야 합니다.' });
+  }
+  const user = store.findUserById(req.session.userId);
+  if (!user || !(await bcrypt.compare(currentPassword || '', user.passwordHash))) {
+    return res.status(401).json({ error: '현재 비밀번호가 올바르지 않습니다.' });
+  }
+  const newHash = await bcrypt.hash(newPassword, 10);
+  store.updatePasswordHash(user.id, newHash);
+  res.json({ ok: true });
 });
 
 app.get('/api/admin/conversations', requireAdmin, (req, res) => {
@@ -97,7 +147,8 @@ app.get('/api/admin/conversations', requireAdmin, (req, res) => {
 });
 
 app.post('/api/conversations', requireAuth, (req, res) => {
-  const conversation = store.createConversation(req.session.userId);
+  const { category } = req.body || {};
+  const conversation = store.createConversation(req.session.userId, category);
   res.json(conversation);
 });
 
@@ -107,6 +158,13 @@ app.get('/api/conversations', requireAuth, (req, res) => {
 
 app.get('/api/conversations/:id', requireAuth, (req, res) => {
   const conversation = store.getConversation(req.session.userId, req.params.id);
+  if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  res.json(conversation);
+});
+
+app.patch('/api/conversations/:id/category', requireAuth, (req, res) => {
+  const { category } = req.body || {};
+  const conversation = store.setConversationCategory(req.session.userId, req.params.id, category);
   if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
   res.json(conversation);
 });
@@ -139,10 +197,15 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   }
 
   try {
+    const settings = store.getSettings(req.session.userId);
     const response = await ai.models.generateContent({
       model: MODEL,
       contents: toGeminiContents([...conversation.turns, { role: 'user', content: message }]),
-      config: { systemInstruction: SYSTEM_PROMPT, maxOutputTokens: 4096 },
+      config: {
+        systemInstruction: buildSystemPrompt(settings.pushbackIntensity),
+        maxOutputTokens: 4096,
+        thinkingConfig: { thinkingLevel: settings.thinkingLevel },
+      },
     });
 
     store.appendTurn(req.session.userId, conversationId, 'user', message);

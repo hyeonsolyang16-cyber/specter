@@ -5,6 +5,8 @@ const DATA_DIR = path.join(__dirname, 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const CONVOS_FILE = path.join(DATA_DIR, 'conversations.json');
 
+const DEFAULT_SETTINGS = { thinkingLevel: 'medium', pushbackIntensity: 'strong', theme: 'light' };
+
 function ensureDataFiles() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
   if (!fs.existsSync(USERS_FILE)) fs.writeFileSync(USERS_FILE, '[]');
@@ -39,10 +41,39 @@ function findUserById(id) {
 
 function createUser(email, passwordHash) {
   const users = getUsers();
-  const user = { id: newId(), email, passwordHash, createdAt: new Date().toISOString() };
+  const user = {
+    id: newId(),
+    email,
+    passwordHash,
+    createdAt: new Date().toISOString(),
+    settings: { ...DEFAULT_SETTINGS },
+  };
   users.push(user);
   writeJson(USERS_FILE, users);
   return user;
+}
+
+function getSettings(userId) {
+  const user = findUserById(userId);
+  return { ...DEFAULT_SETTINGS, ...(user?.settings || {}) };
+}
+
+function updateSettings(userId, patch) {
+  const users = getUsers();
+  const user = users.find((u) => u.id === userId);
+  if (!user) return null;
+  user.settings = { ...DEFAULT_SETTINGS, ...(user.settings || {}), ...patch };
+  writeJson(USERS_FILE, users);
+  return user.settings;
+}
+
+function updatePasswordHash(userId, passwordHash) {
+  const users = getUsers();
+  const user = users.find((u) => u.id === userId);
+  if (!user) return false;
+  user.passwordHash = passwordHash;
+  writeJson(USERS_FILE, users);
+  return true;
 }
 
 // ---- 대화(프로젝트) ----
@@ -51,10 +82,16 @@ function getAllConvos() {
   return readJson(CONVOS_FILE);
 }
 
-function createConversation(userId) {
+function createConversation(userId, category) {
   const convos = getAllConvos();
   if (!convos[userId]) convos[userId] = [];
-  const conversation = { id: newId(), title: '새 프로젝트', createdAt: new Date().toISOString(), turns: [] };
+  const conversation = {
+    id: newId(),
+    title: '새 프로젝트',
+    category: category || '미분류',
+    createdAt: new Date().toISOString(),
+    turns: [],
+  };
   convos[userId].unshift(conversation);
   writeJson(CONVOS_FILE, convos);
   return conversation;
@@ -65,6 +102,7 @@ function listConversations(userId) {
   return (convos[userId] || []).map((c) => ({
     id: c.id,
     title: c.title,
+    category: c.category || '미분류',
     createdAt: c.createdAt,
     messageCount: c.turns.length,
   }));
@@ -73,6 +111,15 @@ function listConversations(userId) {
 function getConversation(userId, conversationId) {
   const convos = getAllConvos();
   return (convos[userId] || []).find((c) => c.id === conversationId) || null;
+}
+
+function setConversationCategory(userId, conversationId, category) {
+  const convos = getAllConvos();
+  const conversation = (convos[userId] || []).find((c) => c.id === conversationId);
+  if (!conversation) return null;
+  conversation.category = category || '미분류';
+  writeJson(CONVOS_FILE, convos);
+  return conversation;
 }
 
 function appendTurn(userId, conversationId, role, content) {
@@ -103,9 +150,13 @@ module.exports = {
   findUserByEmail,
   findUserById,
   createUser,
+  getSettings,
+  updateSettings,
+  updatePasswordHash,
   createConversation,
   listConversations,
   getConversation,
+  setConversationCategory,
   appendTurn,
   getAllConversationsWithEmails,
 };

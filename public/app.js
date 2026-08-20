@@ -74,13 +74,27 @@ async function renderProjectList() {
   if (res.status === 401) return (location.href = '/login.html');
   const conversations = await res.json();
 
-  projectList.innerHTML = '';
+  const byCategory = new Map();
   for (const c of conversations) {
-    const item = document.createElement('button');
-    item.className = `project-item${c.id === currentConversationId ? ' active' : ''}`;
-    item.textContent = c.title;
-    item.addEventListener('click', () => openConversation(c.id));
-    projectList.appendChild(item);
+    const key = c.category || '미분류';
+    if (!byCategory.has(key)) byCategory.set(key, []);
+    byCategory.get(key).push(c);
+  }
+
+  projectList.innerHTML = '';
+  for (const [category, items] of byCategory) {
+    const heading = document.createElement('div');
+    heading.className = 'project-category';
+    heading.textContent = category;
+    projectList.appendChild(heading);
+
+    for (const c of items) {
+      const item = document.createElement('button');
+      item.className = `project-item${c.id === currentConversationId ? ' active' : ''}`;
+      item.textContent = c.title;
+      item.addEventListener('click', () => openConversation(c.id));
+      projectList.appendChild(item);
+    }
   }
   return conversations;
 }
@@ -100,7 +114,12 @@ async function openConversation(id) {
 }
 
 async function createNewProject() {
-  const res = await fetch('/api/conversations', { method: 'POST' });
+  const category = prompt('카테고리를 입력하세요 (비워두면 미분류)', '') || undefined;
+  const res = await fetch('/api/conversations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category }),
+  });
   if (res.status === 401) return (location.href = '/login.html');
   const conversation = await res.json();
   await openConversation(conversation.id);
@@ -179,6 +198,7 @@ async function init() {
   if (meRes.status === 401) return (location.href = '/login.html');
   const me = await meRes.json();
   userEmailEl.textContent = me.email;
+  document.documentElement.setAttribute('data-theme', me.settings?.theme || 'light');
 
   const conversations = await renderProjectList();
   if (conversations.length === 0) {

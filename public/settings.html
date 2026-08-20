@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>설정 - Specter</title>
+<link rel="icon" type="image/png" href="logo.png">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="admin-page">
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark"><img src="logo.png" alt="Specter"></span>
+      <h1>설정</h1>
+    </div>
+    <div class="header-actions">
+      <a href="/" class="reset-btn">채팅으로</a>
+      <button id="logout-btn" class="reset-btn">로그아웃</button>
+    </div>
+  </header>
+
+  <main class="admin-content">
+    <section class="settings-section">
+      <h2>반박 강도</h2>
+      <p class="settings-desc">Specter가 얼마나 세게 반박할지 정합니다.</p>
+      <div class="settings-options" id="intensity-options">
+        <button type="button" data-value="mild">약하게</button>
+        <button type="button" data-value="strong">강하게</button>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>사고 강도</h2>
+      <p class="settings-desc">높을수록 더 깊이 생각하지만 응답이 느려질 수 있습니다. (Gemini가 실제로 지원하는 4단계입니다)</p>
+      <div class="settings-options" id="thinking-options">
+        <button type="button" data-value="minimal">최소</button>
+        <button type="button" data-value="low">낮음</button>
+        <button type="button" data-value="medium">중간</button>
+        <button type="button" data-value="high">높음</button>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>테마</h2>
+      <div class="settings-options" id="theme-options">
+        <button type="button" data-value="light">라이트</button>
+        <button type="button" data-value="dark">다크</button>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>비밀번호 변경</h2>
+      <form id="password-form" class="settings-form">
+        <label>현재 비밀번호
+          <input type="password" id="current-password" required autocomplete="current-password">
+        </label>
+        <label>새 비밀번호 (8자 이상)
+          <input type="password" id="new-password" required minlength="8" autocomplete="new-password">
+        </label>
+        <p id="password-error" class="auth-error"></p>
+        <p id="password-success" class="settings-success"></p>
+        <button type="submit">비밀번호 변경</button>
+      </form>
+    </section>
+  </main>
+</div>
+<script src="settings.js"></script>
+</body>
+</html>
