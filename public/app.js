@@ -7,8 +7,90 @@ const projectList = document.getElementById('project-list');
 const userEmailEl = document.getElementById('user-email');
 const logoutBtn = document.getElementById('logout-btn');
 const installBtn = document.getElementById('install-btn');
+const menuBtn = document.getElementById('menu-btn');
+const sidebar = document.getElementById('sidebar');
+const sidebarOverlay = document.getElementById('sidebar-overlay');
+const appShell = document.querySelector('.app-shell');
+const searchInput = document.getElementById('search-input');
+const attachBtn = document.getElementById('attach-btn');
+const fileInput = document.getElementById('file-input');
+const attachmentPreview = document.getElementById('attachment-preview');
 
 let currentConversationId = null;
+let searchQuery = '';
+let allConversationsCache = [];
+let pendingAttachments = []; // { mimeType, data(base64), previewUrl }
+
+const MAX_ATTACHMENTS = 4;
+const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
+
+function closeSidebar() {
+  appShell.classList.remove('sidebar-open');
+}
+menuBtn.addEventListener('click', () => appShell.classList.toggle('sidebar-open'));
+sidebarOverlay.addEventListener('click', closeSidebar);
+
+searchInput.addEventListener('input', () => {
+  searchQuery = searchInput.value.trim().toLowerCase();
+  renderProjectListFromCache();
+});
+
+attachBtn.addEventListener('click', () => fileInput.click());
+
+fileInput.addEventListener('change', async () => {
+  const files = Array.from(fileInput.files || []);
+  for (const file of files) {
+    if (pendingAttachments.length >= MAX_ATTACHMENTS) {
+      alert(`첨부파일은 최대 ${MAX_ATTACHMENTS}개까지 가능합니다.`);
+      break;
+    }
+    if (!file.type.startsWith('image/')) {
+      alert(`${file.name}은(는) 이미지 파일이 아닙니다.`);
+      continue;
+    }
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      alert(`${file.name} 파일이 너무 큽니다. 4MB 이하 이미지만 첨부할 수 있습니다.`);
+      continue;
+    }
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const match = /^data:(.+?);base64,(.+)$/.exec(dataUrl);
+    if (!match) continue;
+    pendingAttachments.push({ mimeType: match[1], data: match[2], previewUrl: dataUrl });
+  }
+  fileInput.value = '';
+  renderAttachmentPreview();
+});
+
+function renderAttachmentPreview() {
+  attachmentPreview.innerHTML = '';
+  pendingAttachments.forEach((a, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'attachment-chip';
+    const img = document.createElement('img');
+    img.src = a.previewUrl;
+    chip.appendChild(img);
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', () => {
+      pendingAttachments.splice(i, 1);
+      renderAttachmentPreview();
+    });
+    chip.appendChild(removeBtn);
+    attachmentPreview.appendChild(chip);
+  });
+}
+
+function clearAttachments() {
+  pendingAttachments = [];
+  renderAttachmentPreview();
+}
+
 setComposerDisabled(true); // init()이 끝나 currentConversationId가 정해지기 전까지는 전송을 막는다.
 
 if ('serviceWorker' in navigator) {
@@ -55,7 +137,43 @@ function addMessage(role, text, opts = {}) {
   body.className = 'msg-body';
   body.textContent = text;
   el.appendChild(body);
+
+  if (Array.isArray(opts.attachments)) {
+    for (const a of opts.attachments) {
+      const img = document.createElement('img');
+      img.className = 'msg-image';
+      img.src = `data:${a.mimeType};base64,${a.data}`;
+      img.alt = '첨부 이미지';
+      el.appendChild(img);
+    }
+  }
+
+  if (role === 'user' && !opts.error) {
+    const editBtn = document.createElement('button');
+    editBtn.className = 'edit-btn';
+    editBtn.title = '수정';
+    editBtn.textContent = '✎';
+    editBtn.addEventListener('click', () => editMessage(el, text));
+    el.appendChild(editBtn);
+  }
   if (role === 'specter' && !opts.error) {
+    decorateSpecterMessage(el, body);
+  }
+  chat.appendChild(el);
+  chat.scrollTop = chat.scrollHeight;
+  return el;
+}
+
+function decorateSpecterMessage(el, body) {
+  if (!el.querySelector('.regen-btn')) {
+    const regenBtn = document.createElement('button');
+    regenBtn.className = 'regen-btn';
+    regenBtn.title = '다시 생성';
+    regenBtn.textContent = '↻';
+    regenBtn.addEventListener('click', () => regenerateFrom(el));
+    el.appendChild(regenBtn);
+  }
+  if (!el.querySelector('.copy-btn')) {
     const copyBtn = document.createElement('button');
     copyBtn.className = 'copy-btn';
     copyBtn.title = '복사';
@@ -67,9 +185,6 @@ function addMessage(role, text, opts = {}) {
     });
     el.appendChild(copyBtn);
   }
-  chat.appendChild(el);
-  chat.scrollTop = chat.scrollHeight;
-  return el;
 }
 
 function addPendingMessage() {
@@ -130,7 +245,15 @@ function startRateLimitCountdown(el, seconds, restoreText) {
 async function renderProjectList() {
   const res = await fetch('/api/conversations');
   if (res.status === 401) return (location.href = '/login.html');
-  const conversations = await res.json();
+  allConversationsCache = await res.json();
+  renderProjectListFromCache();
+  return allConversationsCache;
+}
+
+function renderProjectListFromCache() {
+  const conversations = searchQuery
+    ? allConversationsCache.filter((c) => c.title.toLowerCase().includes(searchQuery))
+    : allConversationsCache;
 
   const byCategory = new Map();
   for (const c of conversations) {
@@ -140,6 +263,14 @@ async function renderProjectList() {
   }
 
   projectList.innerHTML = '';
+  if (conversations.length === 0 && searchQuery) {
+    const empty = document.createElement('div');
+    empty.className = 'project-category';
+    empty.textContent = '검색 결과 없음';
+    projectList.appendChild(empty);
+    return;
+  }
+
   for (const [category, items] of byCategory) {
     const heading = document.createElement('div');
     heading.className = 'project-category';
@@ -154,7 +285,10 @@ async function renderProjectList() {
       item.className = `project-item${c.id === currentConversationId ? ' active' : ''}`;
       item.textContent = c.title;
       item.title = '더블클릭하면 이름을 바꿀 수 있습니다';
-      item.addEventListener('click', () => openConversation(c.id));
+      item.addEventListener('click', () => {
+        openConversation(c.id);
+        closeSidebar();
+      });
       item.addEventListener('dblclick', (e) => {
         e.stopPropagation();
         startTitleEdit(row, c);
@@ -248,14 +382,138 @@ function startTitleEdit(row, conversation) {
   input.addEventListener('blur', save);
 }
 
+const EXAMPLE_PROMPTS = [
+  '이 계획을 그대로 진행해도 괜찮을지 검토해줘',
+  '이 결정에서 내가 놓치고 있는 리스크가 뭘까?',
+  '이 주장을 뒷받침할 근거가 충분한지 확인해줘',
+];
+
+function renderEmptyState() {
+  chat.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'empty-state';
+  wrap.innerHTML = `
+    <img src="logo.png" alt="Specter">
+    <h2>무엇을 검토해드릴까요?</h2>
+  `;
+  const prompts = document.createElement('div');
+  prompts.className = 'empty-prompts';
+  for (const p of EXAMPLE_PROMPTS) {
+    const btn = document.createElement('button');
+    btn.className = 'empty-prompt-btn';
+    btn.textContent = p;
+    btn.addEventListener('click', () => {
+      input.value = p;
+      form.requestSubmit();
+    });
+    prompts.appendChild(btn);
+  }
+  wrap.appendChild(prompts);
+  chat.appendChild(wrap);
+}
+
+// 특정 메시지부터 뒤를 모두 지우고 서버에도 반영한다. 반환값은 지운 turn 개수(=keepCount).
+async function rewindTo(msgEl) {
+  const allMsgs = Array.from(chat.querySelectorAll('.msg:not(.error)'));
+  const idx = allMsgs.indexOf(msgEl);
+  if (idx === -1) return -1;
+  await fetch(`/api/conversations/${currentConversationId}/rewind`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keepCount: idx }),
+  });
+  for (let i = allMsgs.length - 1; i >= idx; i--) allMsgs[i].remove();
+  return idx;
+}
+
+async function editMessage(msgEl, text) {
+  if (!currentConversationId || sendBtn.type === 'button') return;
+  const idx = await rewindTo(msgEl);
+  if (idx === -1) return;
+  if (!chat.querySelector('.msg')) renderEmptyState();
+  input.value = text;
+  input.dispatchEvent(new Event('input'));
+  input.focus();
+}
+
+async function regenerateFrom(msgEl) {
+  if (!currentConversationId || sendBtn.type === 'button') return;
+  const idx = await rewindTo(msgEl);
+  if (idx === -1) return;
+
+  setGenerating(true);
+  const pending = addPendingMessage();
+  activeAbortController = new AbortController();
+
+  let res;
+  try {
+    res = await fetch('/api/chat/regenerate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: currentConversationId }),
+      signal: activeAbortController.signal,
+    });
+  } catch (err) {
+    pending.remove();
+    addMessage('specter', '서버에 연결할 수 없습니다.', { error: true });
+    setGenerating(false);
+    return;
+  }
+  await handleChatResponse(res, pending, '');
+}
+
+async function handleChatResponse(res, pending, restoreText) {
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    pending.remove();
+    if (res.status === 401) return void (location.href = '/login.html');
+    if (data.kind === 'rate_limit') {
+      const el = addMessage('specter', '', { error: true });
+      startRateLimitCountdown(el, data.retryAfterSeconds || 30, restoreText);
+      setGenerating(false);
+      return;
+    }
+    addMessage('specter', data.error || '알 수 없는 오류가 발생했습니다.', { error: true });
+    setGenerating(false);
+    input.focus();
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      appendStreamChunk(pending, decoder.decode(value, { stream: true }));
+    }
+  } catch (err) {
+    // AbortError: 정지 버튼으로 중단됨 — 지금까지 받은 텍스트는 그대로 남긴다.
+  }
+
+  pending.classList.remove('pending');
+  const body = pending.querySelector('.msg-body');
+  if (!body.textContent) pending.remove();
+  else decorateSpecterMessage(pending, body);
+
+  activeAbortController = null;
+  setGenerating(false);
+  input.focus();
+  renderProjectList(); // 첫 메시지 이후 제목이 바뀌므로 목록 갱신
+}
+
 async function openConversation(id) {
   currentConversationId = id;
   chat.innerHTML = '';
   const res = await fetch(`/api/conversations/${id}`);
   if (res.status === 401) return (location.href = '/login.html');
   const conversation = await res.json();
-  for (const t of conversation.turns) {
-    addMessage(t.role === 'user' ? 'user' : 'specter', t.content);
+  if (conversation.turns.length === 0) {
+    renderEmptyState();
+  } else {
+    for (const t of conversation.turns) {
+      addMessage(t.role === 'user' ? 'user' : 'specter', t.content, { attachments: t.attachments || [] });
+    }
   }
   setComposerDisabled(false);
   renderProjectList();
@@ -303,26 +561,19 @@ sendBtn.addEventListener('click', () => {
   if (sendBtn.type === 'button') activeAbortController?.abort();
 });
 
-input.addEventListener('input', () => {
-  input.style.height = 'auto';
-  input.style.height = Math.min(input.scrollHeight, 160) + 'px';
-});
-
-input.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    form.requestSubmit();
-  }
-});
-
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = input.value.trim();
-  if (!text || !currentConversationId) return;
+  if ((!text && pendingAttachments.length === 0) || !currentConversationId) return;
 
-  addMessage('user', text);
+  const attachmentsForSend = pendingAttachments.map((a) => ({ mimeType: a.mimeType, data: a.data }));
+  const emptyState = chat.querySelector('.empty-state');
+  if (emptyState) emptyState.remove();
+
+  addMessage('user', text, { attachments: attachmentsForSend });
   input.value = '';
   input.style.height = 'auto';
+  clearAttachments();
   setGenerating(true);
 
   const pending = addPendingMessage();
@@ -333,7 +584,7 @@ form.addEventListener('submit', async (e) => {
     res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversationId: currentConversationId, message: text }),
+      body: JSON.stringify({ conversationId: currentConversationId, message: text, attachments: attachmentsForSend }),
       signal: activeAbortController.signal,
     });
   } catch (err) {
@@ -344,54 +595,7 @@ form.addEventListener('submit', async (e) => {
     return;
   }
 
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    pending.remove();
-    if (res.status === 401) return (location.href = '/login.html');
-    if (data.kind === 'rate_limit') {
-      const el = addMessage('specter', '', { error: true });
-      startRateLimitCountdown(el, data.retryAfterSeconds || 30, text);
-      setGenerating(false);
-      return;
-    }
-    addMessage('specter', data.error || '알 수 없는 오류가 발생했습니다.', { error: true });
-    setGenerating(false);
-    input.focus();
-    return;
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      appendStreamChunk(pending, decoder.decode(value, { stream: true }));
-    }
-  } catch (err) {
-    // AbortError: 정지 버튼으로 중단됨 — 지금까지 받은 텍스트는 그대로 남긴다.
-  }
-
-  pending.classList.remove('pending');
-  if (!pending.querySelector('.msg-body').textContent) pending.remove();
-  else if (!pending.querySelector('.copy-btn')) {
-    const copyBtn = document.createElement('button');
-    copyBtn.className = 'copy-btn';
-    copyBtn.title = '복사';
-    copyBtn.textContent = '⧉';
-    const body = pending.querySelector('.msg-body');
-    copyBtn.addEventListener('click', async () => {
-      await navigator.clipboard.writeText(body.textContent);
-      copyBtn.textContent = '✓';
-      setTimeout(() => (copyBtn.textContent = '⧉'), 1200);
-    });
-    pending.appendChild(copyBtn);
-  }
-
-  activeAbortController = null;
-  setGenerating(false);
-  input.focus();
-  renderProjectList(); // 첫 메시지 이후 제목이 바뀌므로 목록 갱신
+  await handleChatResponse(res, pending, text);
 });
 
 async function init() {

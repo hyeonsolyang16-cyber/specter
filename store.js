@@ -35,6 +35,7 @@ async function init() {
       content TEXT NOT NULL,
       at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    ALTER TABLE turns ADD COLUMN IF NOT EXISTS attachments JSONB;
   `);
 }
 const ready = init().catch((err) => {
@@ -138,10 +139,28 @@ async function getConversation(userId, conversationId) {
     userId,
   ]);
   if (!convRes.rows[0]) return null;
-  const turnsRes = await pool.query('SELECT role, content, at FROM turns WHERE conversation_id = $1 ORDER BY at ASC', [
-    conversationId,
-  ]);
+  const turnsRes = await pool.query(
+    'SELECT role, content, attachments, at FROM turns WHERE conversation_id = $1 ORDER BY at ASC',
+    [conversationId]
+  );
   return { ...rowToConversation(convRes.rows[0]), turns: turnsRes.rows };
+}
+
+// 편집/재생성 시 특정 시점 이후의 turn을 모두 지운다. keepCount개만 남긴다.
+async function rewindConversation(userId, conversationId, keepCount) {
+  await ready;
+  const owns = await pool.query('SELECT id FROM conversations WHERE id = $1 AND user_id = $2', [
+    conversationId,
+    userId,
+  ]);
+  if (!owns.rows[0]) return null;
+  await pool.query(
+    `DELETE FROM turns WHERE conversation_id = $1 AND id NOT IN (
+       SELECT id FROM turns WHERE conversation_id = $1 ORDER BY at ASC LIMIT $2
+     )`,
+    [conversationId, keepCount]
+  );
+  return getConversation(userId, conversationId);
 }
 
 async function setConversationCategory(userId, conversationId, category) {
@@ -172,21 +191,22 @@ async function deleteConversation(userId, conversationId) {
   return rowCount > 0;
 }
 
-async function appendTurn(userId, conversationId, role, content) {
+async function appendTurn(userId, conversationId, role, content, attachments) {
   await ready;
   if (role === 'user') {
     const countRes = await pool.query('SELECT COUNT(*)::int AS n FROM turns WHERE conversation_id = $1', [
       conversationId,
     ]);
     if (countRes.rows[0].n === 0) {
-      const title = content.slice(0, 30) + (content.length > 30 ? '…' : '');
+      const title = content ? content.slice(0, 30) + (content.length > 30 ? '…' : '') : '[이미지]';
       await pool.query('UPDATE conversations SET title = $2 WHERE id = $1', [conversationId, title]);
     }
   }
-  await pool.query('INSERT INTO turns (conversation_id, role, content) VALUES ($1, $2, $3)', [
+  await pool.query('INSERT INTO turns (conversation_id, role, content, attachments) VALUES ($1, $2, $3, $4)', [
     conversationId,
     role,
     content,
+    attachments ? JSON.stringify(attachments) : null,
   ]);
 }
 
@@ -200,9 +220,10 @@ async function getAllConversationsWithEmails() {
     ]);
     const conversations = [];
     for (const c of convRes.rows) {
-      const turnsRes = await pool.query('SELECT role, content, at FROM turns WHERE conversation_id = $1 ORDER BY at ASC', [
-        c.id,
-      ]);
+      const turnsRes = await pool.query(
+        'SELECT role, content, attachments, at FROM turns WHERE conversation_id = $1 ORDER BY at ASC',
+        [c.id]
+      );
       conversations.push({ ...rowToConversation(c), turns: turnsRes.rows });
     }
     result.push({ userId: u.id, email: u.email, createdAt: u.created_at, conversations });
@@ -223,6 +244,7 @@ module.exports = {
   setConversationCategory,
   renameConversation,
   deleteConversation,
+  rewindConversation,
   appendTurn,
   getAllConversationsWithEmails,
 };
