@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: specter
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SPECTER_MODEL
+        value: claude-sonnet-5
+      - key: SPECTER_EFFORT
+        value: medium

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Specter</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M6 9 A6 6 0 0 1 18 9 L18 19 L15 16.5 L12 19 L9 16.5 L6 19 Z"/>
+        </svg>
+      </span>
+      <div>
+        <h1>Specter</h1>
+        <p class="tagline">동의하기 전에 먼저 반박합니다</p>
+      </div>
+    </div>
+    <button id="reset-btn" class="reset-btn" title="대화 초기화">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 1 3 6.7M3 12v6m0-6h6"/></svg>
+      <span>초기화</span>
+    </button>
+  </header>
+
+  <main id="chat" class="chat"></main>
+
+  <form id="composer" class="composer">
+    <textarea id="input" placeholder="주장이나 계획을 입력하세요…" rows="1"></textarea>
+    <button type="submit" id="send-btn" aria-label="전송">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m0 0-6-6m6 6-6 6"/></svg>
+    </button>
+  </form>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
