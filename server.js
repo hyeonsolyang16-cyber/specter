@@ -4,7 +4,7 @@ const { GoogleGenAI, ApiError } = require('@google/genai');
 const { SYSTEM_PROMPT } = require('./system-prompt');
 
 const PORT = process.env.PORT || 3210;
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
 if (!process.env.GEMINI_API_KEY) {
   console.error('GEMINI_API_KEY가 설정되지 않았습니다. .env 파일을 확인하세요.');
@@ -47,7 +47,7 @@ app.post('/api/chat', async (req, res) => {
     const response = await ai.models.generateContent({
       model: MODEL,
       contents: toGeminiContents(messages),
-      config: { systemInstruction: SYSTEM_PROMPT, maxOutputTokens: 1536 },
+      config: { systemInstruction: SYSTEM_PROMPT, maxOutputTokens: 4096 },
     });
 
     res.json({ text: response.text });
