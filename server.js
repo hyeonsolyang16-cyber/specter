@@ -78,12 +78,66 @@ app.post('/api/signup', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body || {};
   const user = await store.findUserByEmail(email || '');
-  if (!user || !(await bcrypt.compare(password || '', user.passwordHash))) {
+  if (!user || !user.passwordHash) {
+    return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' });
+  }
+  if (!(await bcrypt.compare(password || '', user.passwordHash))) {
     return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' });
   }
   req.session.userId = user.id;
   req.session.isAdmin = user.email.toLowerCase() === ADMIN_EMAIL;
   res.json({ email: user.email, isAdmin: req.session.isAdmin });
+});
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI;
+
+app.get('/auth/google', (req, res) => {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_REDIRECT_URI) {
+    return res.redirect('/login.html?error=google_not_configured');
+  }
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    response_type: 'code',
+    scope: 'openid email profile',
+    prompt: 'select_account',
+  });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+});
+
+app.get('/auth/google/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.redirect('/login.html?error=google');
+  try {
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: GOOGLE_REDIRECT_URI,
+        grant_type: 'authorization_code',
+      }),
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenData.id_token) throw new Error('token exchange failed: ' + JSON.stringify(tokenData));
+
+    // id_token은 우리 client_secret으로 인증된 서버-서버 호출로 구글에서 직접 받은 값이라
+    // (사용자 입력이 아니라) 별도 서명 검증 없이 payload만 디코딩해도 안전하다.
+    const payload = JSON.parse(Buffer.from(tokenData.id_token.split('.')[1], 'base64url').toString('utf8'));
+    if (!payload.email || !payload.email_verified) throw new Error('구글 이메일이 확인되지 않았습니다.');
+
+    const user = await store.findOrCreateGoogleUser(payload.email, payload.sub);
+    req.session.userId = user.id;
+    req.session.isAdmin = user.email.toLowerCase() === ADMIN_EMAIL;
+    res.redirect('/');
+  } catch (err) {
+    console.error('Google 로그인 실패:', err);
+    res.redirect('/login.html?error=google');
+  }
 });
 
 app.post('/api/logout', (req, res) => {

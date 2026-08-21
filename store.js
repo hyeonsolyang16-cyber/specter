@@ -36,6 +36,8 @@ async function init() {
       at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS attachments JSONB;
+    ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE;
   `);
 }
 const ready = init().catch((err) => {
@@ -77,6 +79,24 @@ async function createUser(email, passwordHash) {
   const { rows } = await pool.query(
     'INSERT INTO users (id, email, password_hash, settings) VALUES ($1, $2, $3, $4) RETURNING *',
     [id, email, passwordHash, JSON.stringify(DEFAULT_SETTINGS)]
+  );
+  return rowToUser(rows[0]);
+}
+
+// Google 로그인: 이메일이 이미 있으면 그 계정에 연결하고, 없으면 새로 만든다.
+async function findOrCreateGoogleUser(email, googleId) {
+  await ready;
+  const existing = await pool.query('SELECT * FROM users WHERE lower(email) = lower($1)', [email]);
+  if (existing.rows[0]) {
+    if (!existing.rows[0].google_id) {
+      await pool.query('UPDATE users SET google_id = $2 WHERE id = $1', [existing.rows[0].id, googleId]);
+    }
+    return rowToUser(existing.rows[0]);
+  }
+  const id = newId();
+  const { rows } = await pool.query(
+    'INSERT INTO users (id, email, password_hash, google_id, settings) VALUES ($1, $2, NULL, $3, $4) RETURNING *',
+    [id, email, googleId, JSON.stringify(DEFAULT_SETTINGS)]
   );
   return rowToUser(rows[0]);
 }
@@ -235,6 +255,7 @@ module.exports = {
   findUserByEmail,
   findUserById,
   createUser,
+  findOrCreateGoogleUser,
   getSettings,
   updateSettings,
   updatePasswordHash,
