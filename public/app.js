@@ -15,6 +15,7 @@ const searchInput = document.getElementById('search-input');
 const attachBtn = document.getElementById('attach-btn');
 const fileInput = document.getElementById('file-input');
 const attachmentPreview = document.getElementById('attachment-preview');
+const adminLink = document.getElementById('admin-link');
 
 let currentConversationId = null;
 let searchQuery = '';
@@ -623,6 +624,7 @@ async function init() {
   if (meRes.status === 401) return (location.href = '/login.html');
   const me = await meRes.json();
   userEmailEl.textContent = me.email;
+  adminLink.hidden = !me.isAdmin;
   document.documentElement.setAttribute('data-theme', me.settings?.theme || 'light');
 
   const conversations = await renderProjectList();
