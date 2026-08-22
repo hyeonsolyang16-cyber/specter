@@ -55,6 +55,16 @@
     </section>
 
     <section class="settings-section">
+      <h2>메모리</h2>
+      <p class="settings-desc">여기 적어두면 모든 대화에서 항상 참고합니다. (최대 2000자, 추가 비용 없음)</p>
+      <form id="memory-form" class="settings-form">
+        <textarea id="memory-input" rows="4" maxlength="2000" placeholder="예: 나는 스타트업 대표고, 항상 리스크와 실행 가능성 위주로 검토해줘"></textarea>
+        <p id="memory-success" class="settings-success"></p>
+        <button type="submit">메모리 저장</button>
+      </form>
+    </section>
+
+    <section class="settings-section">
       <h2>테마</h2>
       <div class="settings-options" id="theme-options">
         <button type="button" data-value="light">라이트</button>

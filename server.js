@@ -234,9 +234,17 @@ app.get('/api/settings', requireAuth, async (req, res) => {
   res.json(await store.getSettings(req.session.userId));
 });
 
+const MAX_MEMORY_LENGTH = 2000;
+
 app.post('/api/settings', requireAuth, async (req, res) => {
-  const { performanceMode, pushbackIntensity, theme } = req.body || {};
+  const { performanceMode, pushbackIntensity, theme, memory } = req.body || {};
   const patch = {};
+  if (memory !== undefined) {
+    if (typeof memory !== 'string' || memory.length > MAX_MEMORY_LENGTH) {
+      return res.status(400).json({ error: `메모리는 ${MAX_MEMORY_LENGTH}자 이하로 입력하세요.` });
+    }
+    patch.memory = memory;
+  }
   if (performanceMode !== undefined) {
     if (!VALID_PERFORMANCE_MODES.includes(performanceMode)) {
       return res.status(400).json({ error: '유효하지 않은 performanceMode 입니다.' });
@@ -371,7 +379,7 @@ async function streamAndRespond(req, res, contents, settings, onComplete) {
       model: mode.model,
       contents,
       config: {
-        systemInstruction: buildSystemPrompt(settings.pushbackIntensity),
+        systemInstruction: buildSystemPrompt(settings.pushbackIntensity, settings.memory),
         maxOutputTokens: 4096,
         thinkingConfig: { thinkingLevel: mode.thinkingLevel },
       },

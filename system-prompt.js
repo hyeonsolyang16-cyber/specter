@@ -25,9 +25,13 @@ const INTENSITY_TONE = {
 - 응답은 간결하게. 반박의 핵심과 근거만 명확히 전달하세요.`,
 };
 
-function buildSystemPrompt(pushbackIntensity) {
+function buildSystemPrompt(pushbackIntensity, memory) {
   const tone = INTENSITY_TONE[pushbackIntensity] || INTENSITY_TONE.strong;
-  return `${BASE_PROMPT}\n\n${tone}`;
+  let prompt = `${BASE_PROMPT}\n\n${tone}`;
+  if (memory && memory.trim()) {
+    prompt += `\n\n## 사용자에 대해 항상 기억할 내용\n이 내용은 사용자가 직접 등록했으며 모든 대화에서 참고해야 합니다:\n${memory.trim()}`;
+  }
+  return prompt;
 }
 
 module.exports = { buildSystemPrompt };

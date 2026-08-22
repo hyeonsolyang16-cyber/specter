@@ -10,7 +10,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-const DEFAULT_SETTINGS = { performanceMode: 'standard', pushbackIntensity: 'strong', theme: 'light' };
+const DEFAULT_SETTINGS = { performanceMode: 'standard', pushbackIntensity: 'strong', theme: 'light', memory: '' };
 
 async function init() {
   await pool.query(`
