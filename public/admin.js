@@ -24,7 +24,7 @@ function renderUsageTable(usage) {
 
   const header = el('div', 'admin-user-header');
   header.appendChild(el('strong', null, '사용량 요약'));
-  header.appendChild(el('span', null, '비공개 프로젝트의 토큰 사용량도 포함됩니다 (내용은 비공개)'));
+  header.appendChild(el('span', null, '전체 유저의 누적 토큰 사용량입니다'));
   section.appendChild(header);
 
   if (usage.length === 0) {

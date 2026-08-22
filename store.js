@@ -138,22 +138,7 @@ async function createConversation(userId, category) {
 }
 
 function rowToConversation(row) {
-  return {
-    id: row.id,
-    title: row.title,
-    category: row.category,
-    createdAt: row.created_at,
-    isPrivate: row.is_private,
-  };
-}
-
-async function setConversationPrivacy(userId, conversationId, isPrivate) {
-  await ready;
-  const { rows } = await pool.query(
-    'UPDATE conversations SET is_private = $3 WHERE id = $2 AND user_id = $1 RETURNING *',
-    [userId, conversationId, !!isPrivate]
-  );
-  return rows[0] ? rowToConversation(rows[0]) : null;
+  return { id: row.id, title: row.title, category: row.category, createdAt: row.created_at };
 }
 
 async function listConversations(userId) {
@@ -253,7 +238,7 @@ async function appendTurn(userId, conversationId, role, content, attachments, to
   ]);
 }
 
-// 관리자용 사용량 요약: 유저별 대화 수와 누적 토큰 사용량(비공개 대화 포함, 내용은 노출하지 않음).
+// 관리자용 사용량 요약: 유저별 대화 수와 누적 토큰 사용량.
 async function getUsageSummary() {
   await ready;
   const { rows } = await pool.query(`
@@ -279,10 +264,9 @@ async function getAllConversationsWithEmails() {
   const usersRes = await pool.query('SELECT * FROM users ORDER BY created_at ASC');
   const result = [];
   for (const u of usersRes.rows) {
-    const convRes = await pool.query(
-      'SELECT * FROM conversations WHERE user_id = $1 AND is_private = false ORDER BY created_at DESC',
-      [u.id]
-    );
+    const convRes = await pool.query('SELECT * FROM conversations WHERE user_id = $1 ORDER BY created_at DESC', [
+      u.id,
+    ]);
     const conversations = [];
     for (const c of convRes.rows) {
       const turnsRes = await pool.query(
@@ -308,7 +292,6 @@ module.exports = {
   listConversations,
   getConversation,
   setConversationCategory,
-  setConversationPrivacy,
   renameConversation,
   deleteConversation,
   rewindConversation,

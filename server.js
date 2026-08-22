@@ -294,13 +294,6 @@ app.patch('/api/conversations/:id/category', requireAuth, async (req, res) => {
   res.json(conversation);
 });
 
-app.patch('/api/conversations/:id/private', requireAuth, async (req, res) => {
-  const { isPrivate } = req.body || {};
-  const conversation = await store.setConversationPrivacy(req.session.userId, req.params.id, !!isPrivate);
-  if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
-  res.json(conversation);
-});
-
 app.patch('/api/conversations/:id/title', requireAuth, async (req, res) => {
   const { title } = req.body || {};
   if (!title || !title.trim()) return res.status(400).json({ error: 'title이 필요합니다.' });
