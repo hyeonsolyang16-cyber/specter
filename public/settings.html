@@ -38,14 +38,20 @@
     </section>
 
     <section class="settings-section">
-      <h2>사고 강도</h2>
-      <p class="settings-desc">높을수록 더 깊이 생각하지만 응답이 느려질 수 있습니다. (Gemini가 실제로 지원하는 4단계입니다)</p>
-      <div class="settings-options" id="thinking-options">
-        <button type="button" data-value="minimal">최소</button>
-        <button type="button" data-value="low">낮음</button>
-        <button type="button" data-value="medium">중간</button>
-        <button type="button" data-value="high">높음</button>
+      <h2>성능 모드</h2>
+      <p class="settings-desc">높을수록 더 깊이 생각하고 더 상위 모델을 쓰지만, 무료 사용량을 더 많이 소모하고 응답이 느려질 수 있습니다.</p>
+      <div class="settings-options" id="performance-options">
+        <button type="button" data-value="lite">Lite</button>
+        <button type="button" data-value="standard">Standard</button>
+        <button type="button" data-value="high">High</button>
+        <button type="button" data-value="max">Max</button>
       </div>
+      <ul class="settings-mode-desc">
+        <li><b>Lite</b> — 가장 빠르고 가벼움, 간단한 질문에 적합, 무료 사용량 가장 적게 사용</li>
+        <li><b>Standard</b> — 기본값, 대부분의 검토에 적합한 균형 모드</li>
+        <li><b>High</b> — 더 깊이 생각한 뒤 답변, 복잡한 의사결정 검토에 적합</li>
+        <li><b>Max</b> — 가장 최신 모델 + 최고 사고 강도, 가장 정교하지만 무료 사용량을 가장 많이 사용</li>
+      </ul>
     </section>
 
     <section class="settings-section">

@@ -1,5 +1,5 @@
 const intensityOptions = document.getElementById('intensity-options');
-const thinkingOptions = document.getElementById('thinking-options');
+const performanceOptions = document.getElementById('performance-options');
 const themeOptions = document.getElementById('theme-options');
 const passwordForm = document.getElementById('password-form');
 const passwordError = document.getElementById('password-error');
@@ -32,11 +32,11 @@ intensityOptions.addEventListener('click', (e) => {
   saveSetting('pushbackIntensity', btn.dataset.value);
 });
 
-thinkingOptions.addEventListener('click', (e) => {
+performanceOptions.addEventListener('click', (e) => {
   const btn = e.target.closest('button');
   if (!btn) return;
-  markActive(thinkingOptions, btn.dataset.value);
-  saveSetting('thinkingLevel', btn.dataset.value);
+  markActive(performanceOptions, btn.dataset.value);
+  saveSetting('performanceMode', btn.dataset.value);
 });
 
 themeOptions.addEventListener('click', (e) => {
@@ -74,7 +74,7 @@ async function init() {
   const settings = await res.json();
   document.documentElement.setAttribute('data-theme', settings.theme || 'light');
   markActive(intensityOptions, settings.pushbackIntensity);
-  markActive(thinkingOptions, settings.thinkingLevel);
+  markActive(performanceOptions, settings.performanceMode);
   markActive(themeOptions, settings.theme);
 }
 

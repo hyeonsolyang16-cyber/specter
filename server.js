@@ -7,8 +7,15 @@ const { buildSystemPrompt } = require('./system-prompt');
 const store = require('./store');
 
 const PORT = process.env.PORT || 3210;
-const MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').toLowerCase();
+
+// 성능 모드 하나로 모델 + 사고 강도를 함께 정한다. 전부 Gemini 무료 티어 모델이다.
+const PERFORMANCE_MODES = {
+  lite: { model: 'gemini-3.5-flash-lite', thinkingLevel: 'minimal' },
+  standard: { model: process.env.GEMINI_MODEL || 'gemini-3.6-flash', thinkingLevel: 'medium' },
+  high: { model: process.env.GEMINI_MODEL || 'gemini-3.6-flash', thinkingLevel: 'high' },
+  max: { model: 'gemini-3.7-flash', thinkingLevel: 'high' },
+};
 
 if (!process.env.GEMINI_API_KEY) {
   console.error('GEMINI_API_KEY가 설정되지 않았습니다. .env 파일을 확인하세요.');
@@ -149,7 +156,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
   res.json({ email: user?.email, isAdmin: !!req.session.isAdmin, settings: await store.getSettings(req.session.userId) });
 });
 
-const VALID_THINKING_LEVELS = ['minimal', 'low', 'medium', 'high'];
+const VALID_PERFORMANCE_MODES = Object.keys(PERFORMANCE_MODES);
 const VALID_INTENSITIES = ['mild', 'strong'];
 const VALID_THEMES = ['light', 'dark'];
 const MAX_ATTACHMENTS = 4;
@@ -177,13 +184,13 @@ app.get('/api/settings', requireAuth, async (req, res) => {
 });
 
 app.post('/api/settings', requireAuth, async (req, res) => {
-  const { thinkingLevel, pushbackIntensity, theme } = req.body || {};
+  const { performanceMode, pushbackIntensity, theme } = req.body || {};
   const patch = {};
-  if (thinkingLevel !== undefined) {
-    if (!VALID_THINKING_LEVELS.includes(thinkingLevel)) {
-      return res.status(400).json({ error: '유효하지 않은 thinkingLevel 입니다.' });
+  if (performanceMode !== undefined) {
+    if (!VALID_PERFORMANCE_MODES.includes(performanceMode)) {
+      return res.status(400).json({ error: '유효하지 않은 performanceMode 입니다.' });
     }
-    patch.thinkingLevel = thinkingLevel;
+    patch.performanceMode = performanceMode;
   }
   if (pushbackIntensity !== undefined) {
     if (!VALID_INTENSITIES.includes(pushbackIntensity)) {
@@ -302,14 +309,16 @@ async function streamAndRespond(req, res, contents, settings, onComplete) {
     aborted = true;
   });
 
+  const mode = PERFORMANCE_MODES[settings.performanceMode] || PERFORMANCE_MODES.standard;
+
   try {
     const stream = await ai.models.generateContentStream({
-      model: MODEL,
+      model: mode.model,
       contents,
       config: {
         systemInstruction: buildSystemPrompt(settings.pushbackIntensity),
         maxOutputTokens: 4096,
-        thinkingConfig: { thinkingLevel: settings.thinkingLevel },
+        thinkingConfig: { thinkingLevel: mode.thinkingLevel },
       },
     });
 
@@ -397,5 +406,5 @@ app.post('/api/chat/regenerate', requireAuth, async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Specter가 http://localhost:${PORT} 에서 실행 중입니다. (model=${MODEL})`);
+  console.log(`Specter가 http://localhost:${PORT} 에서 실행 중입니다.`);
 });
