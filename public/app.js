@@ -44,12 +44,14 @@ fileInput.addEventListener('change', async () => {
       alert(`첨부파일은 최대 ${MAX_ATTACHMENTS}개까지 가능합니다.`);
       break;
     }
-    if (!file.type.startsWith('image/')) {
-      alert(`${file.name}은(는) 이미지 파일이 아닙니다.`);
+    const isImage = file.type.startsWith('image/');
+    const isPdf = file.type === 'application/pdf';
+    if (!isImage && !isPdf) {
+      alert(`${file.name}은(는) 지원하지 않는 형식입니다. 이미지 또는 PDF만 첨부할 수 있습니다.`);
       continue;
     }
     if (file.size > MAX_ATTACHMENT_BYTES) {
-      alert(`${file.name} 파일이 너무 큽니다. 4MB 이하 이미지만 첨부할 수 있습니다.`);
+      alert(`${file.name} 파일이 너무 큽니다. 4MB 이하만 첨부할 수 있습니다.`);
       continue;
     }
     const dataUrl = await new Promise((resolve, reject) => {
@@ -60,7 +62,12 @@ fileInput.addEventListener('change', async () => {
     });
     const match = /^data:(.+?);base64,(.+)$/.exec(dataUrl);
     if (!match) continue;
-    pendingAttachments.push({ mimeType: match[1], data: match[2], previewUrl: dataUrl });
+    pendingAttachments.push({
+      mimeType: match[1],
+      data: match[2],
+      name: file.name,
+      previewUrl: isImage ? dataUrl : null,
+    });
   }
   fileInput.value = '';
   renderAttachmentPreview();
@@ -71,9 +78,15 @@ function renderAttachmentPreview() {
   pendingAttachments.forEach((a, i) => {
     const chip = document.createElement('span');
     chip.className = 'attachment-chip';
-    const img = document.createElement('img');
-    img.src = a.previewUrl;
-    chip.appendChild(img);
+    if (a.previewUrl) {
+      const img = document.createElement('img');
+      img.src = a.previewUrl;
+      chip.appendChild(img);
+    } else {
+      const fileLabel = document.createElement('span');
+      fileLabel.textContent = `📄 ${a.name}`;
+      chip.appendChild(fileLabel);
+    }
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.textContent = '✕';
@@ -140,11 +153,18 @@ function addMessage(role, text, opts = {}) {
 
   if (Array.isArray(opts.attachments)) {
     for (const a of opts.attachments) {
-      const img = document.createElement('img');
-      img.className = 'msg-image';
-      img.src = `data:${a.mimeType};base64,${a.data}`;
-      img.alt = '첨부 이미지';
-      el.appendChild(img);
+      if (a.mimeType.startsWith('image/')) {
+        const img = document.createElement('img');
+        img.className = 'msg-image';
+        img.src = `data:${a.mimeType};base64,${a.data}`;
+        img.alt = '첨부 이미지';
+        el.appendChild(img);
+      } else {
+        const fileChip = document.createElement('span');
+        fileChip.className = 'msg-file-chip';
+        fileChip.textContent = `📄 ${a.name || '문서'}`;
+        el.appendChild(fileChip);
+      }
     }
   }
 
@@ -581,7 +601,7 @@ form.addEventListener('submit', async (e) => {
   const text = input.value.trim();
   if ((!text && pendingAttachments.length === 0) || !currentConversationId) return;
 
-  const attachmentsForSend = pendingAttachments.map((a) => ({ mimeType: a.mimeType, data: a.data }));
+  const attachmentsForSend = pendingAttachments.map((a) => ({ mimeType: a.mimeType, data: a.data, name: a.name }));
   const emptyState = chat.querySelector('.empty-state');
   if (emptyState) emptyState.remove();
 

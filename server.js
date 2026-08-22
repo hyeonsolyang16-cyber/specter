@@ -175,11 +175,13 @@ function validateAttachments(attachments) {
     return `첨부파일은 최대 ${MAX_ATTACHMENTS}개까지 가능합니다.`;
   }
   for (const a of attachments) {
-    if (!a || typeof a.mimeType !== 'string' || typeof a.data !== 'string' || !a.mimeType.startsWith('image/')) {
-      return '첨부파일 형식이 올바르지 않습니다.';
+    const isImage = a && typeof a.mimeType === 'string' && a.mimeType.startsWith('image/');
+    const isPdf = a && a.mimeType === 'application/pdf';
+    if (!a || typeof a.data !== 'string' || !(isImage || isPdf)) {
+      return '첨부파일 형식이 올바르지 않습니다. 이미지 또는 PDF만 가능합니다.';
     }
     if (a.data.length * 0.75 > MAX_ATTACHMENT_BYTES) {
-      return '이미지는 4MB 이하만 첨부할 수 있습니다.';
+      return '첨부파일은 4MB 이하만 가능합니다.';
     }
   }
   return null;
