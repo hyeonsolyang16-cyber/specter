@@ -16,6 +16,7 @@ const attachBtn = document.getElementById('attach-btn');
 const fileInput = document.getElementById('file-input');
 const attachmentPreview = document.getElementById('attachment-preview');
 const adminLink = document.getElementById('admin-link');
+const micBtn = document.getElementById('mic-btn');
 
 let currentConversationId = null;
 let searchQuery = '';
@@ -103,6 +104,72 @@ function renderAttachmentPreview() {
 function clearAttachments() {
   pendingAttachments = [];
   renderAttachmentPreview();
+}
+
+// 음성 입력 — 크롬/엣지 계열만 지원. 안 되는 브라우저는 마이크 버튼 자체를 숨긴다.
+const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (SpeechRecognitionCtor) {
+  const recognition = new SpeechRecognitionCtor();
+  recognition.lang = 'ko-KR';
+  recognition.interimResults = true;
+  recognition.continuous = false;
+
+  let baseText = '';
+  let isRecording = false;
+
+  recognition.addEventListener('start', () => {
+    isRecording = true;
+    micBtn.classList.add('recording');
+    baseText = input.value ? input.value.trim() + ' ' : '';
+  });
+  recognition.addEventListener('result', (e) => {
+    let transcript = '';
+    for (let i = 0; i < e.results.length; i++) transcript += e.results[i][0].transcript;
+    input.value = baseText + transcript;
+    input.dispatchEvent(new Event('input'));
+  });
+  recognition.addEventListener('end', () => {
+    isRecording = false;
+    micBtn.classList.remove('recording');
+  });
+  recognition.addEventListener('error', () => {
+    isRecording = false;
+    micBtn.classList.remove('recording');
+  });
+
+  micBtn.hidden = false;
+  micBtn.addEventListener('click', () => {
+    if (isRecording) recognition.stop();
+    else {
+      recognition.start();
+      input.focus();
+    }
+  });
+}
+
+// 음성 출력(TTS) — Web Speech Synthesis API. 대부분의 최신 브라우저가 지원한다.
+function speakText(text, btn) {
+  if (!('speechSynthesis' in window)) return;
+  const wasThisSpeaking = btn.dataset.speaking === 'true';
+  if (speechSynthesis.speaking) {
+    speechSynthesis.cancel();
+    btn.textContent = '🔊';
+    btn.dataset.speaking = 'false';
+  }
+  if (wasThisSpeaking) return; // 같은 버튼을 다시 누르면 정지만 하고 끝낸다.
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'ko-KR';
+  btn.textContent = '⏸';
+  btn.dataset.speaking = 'true';
+  utter.onend = () => {
+    btn.textContent = '🔊';
+    btn.dataset.speaking = 'false';
+  };
+  utter.onerror = () => {
+    btn.textContent = '🔊';
+    btn.dataset.speaking = 'false';
+  };
+  speechSynthesis.speak(utter);
 }
 
 setComposerDisabled(true); // init()이 끝나 currentConversationId가 정해지기 전까지는 전송을 막는다.
@@ -205,6 +272,15 @@ function decorateSpecterMessage(el, body) {
       setTimeout(() => (copyBtn.textContent = '⧉'), 1200);
     });
     el.appendChild(copyBtn);
+  }
+  if ('speechSynthesis' in window && !el.querySelector('.speak-btn')) {
+    const speakBtn = document.createElement('button');
+    speakBtn.className = 'speak-btn';
+    speakBtn.title = '읽어주기';
+    speakBtn.textContent = '🔊';
+    speakBtn.dataset.speaking = 'false';
+    speakBtn.addEventListener('click', () => speakText(body.textContent, speakBtn));
+    el.appendChild(speakBtn);
   }
 }
 
