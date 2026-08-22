@@ -2,7 +2,7 @@ name: Keep Specter awake
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '*/12 * * * *'
   workflow_dispatch:
 
 jobs:
