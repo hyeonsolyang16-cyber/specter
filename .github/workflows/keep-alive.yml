@@ -1,0 +1,13 @@
+name: Keep Specter awake
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping login page
+        run: curl -sf -o /dev/null https://specter-js8n.onrender.com/login.html
