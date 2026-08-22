@@ -38,6 +38,7 @@ async function init() {
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS attachments JSONB;
     ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE;
+    ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT false;
   `);
 }
 const ready = init().catch((err) => {
@@ -136,7 +137,22 @@ async function createConversation(userId, category) {
 }
 
 function rowToConversation(row) {
-  return { id: row.id, title: row.title, category: row.category, createdAt: row.created_at };
+  return {
+    id: row.id,
+    title: row.title,
+    category: row.category,
+    createdAt: row.created_at,
+    isPrivate: row.is_private,
+  };
+}
+
+async function setConversationPrivacy(userId, conversationId, isPrivate) {
+  await ready;
+  const { rows } = await pool.query(
+    'UPDATE conversations SET is_private = $3 WHERE id = $2 AND user_id = $1 RETURNING *',
+    [userId, conversationId, !!isPrivate]
+  );
+  return rows[0] ? rowToConversation(rows[0]) : null;
 }
 
 async function listConversations(userId) {
@@ -235,9 +251,10 @@ async function getAllConversationsWithEmails() {
   const usersRes = await pool.query('SELECT * FROM users ORDER BY created_at ASC');
   const result = [];
   for (const u of usersRes.rows) {
-    const convRes = await pool.query('SELECT * FROM conversations WHERE user_id = $1 ORDER BY created_at DESC', [
-      u.id,
-    ]);
+    const convRes = await pool.query(
+      'SELECT * FROM conversations WHERE user_id = $1 AND is_private = false ORDER BY created_at DESC',
+      [u.id]
+    );
     const conversations = [];
     for (const c of convRes.rows) {
       const turnsRes = await pool.query(
@@ -263,6 +280,7 @@ module.exports = {
   listConversations,
   getConversation,
   setConversationCategory,
+  setConversationPrivacy,
   renameConversation,
   deleteConversation,
   rewindConversation,

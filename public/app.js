@@ -303,6 +303,20 @@ function renderProjectListFromCache() {
         startCategoryEdit(row, c);
       });
 
+      const privacyBtn = document.createElement('button');
+      privacyBtn.className = 'project-category-edit';
+      privacyBtn.title = c.isPrivate ? '관리자 열람에서 제외됨 (클릭하면 다시 공개)' : '관리자 열람에서 제외하기';
+      privacyBtn.textContent = c.isPrivate ? '🔒' : '🔓';
+      privacyBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await fetch(`/api/conversations/${c.id}/private`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isPrivate: !c.isPrivate }),
+        });
+        renderProjectList();
+      });
+
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'project-category-edit';
       deleteBtn.title = '프로젝트 삭제';
@@ -323,6 +337,7 @@ function renderProjectListFromCache() {
 
       row.appendChild(item);
       row.appendChild(editBtn);
+      row.appendChild(privacyBtn);
       row.appendChild(deleteBtn);
       projectList.appendChild(row);
     }
