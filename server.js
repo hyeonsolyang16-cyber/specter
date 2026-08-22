@@ -10,7 +10,16 @@ const { buildSystemPrompt } = require('./system-prompt');
 const store = require('./store');
 
 const PORT = process.env.PORT || 3210;
-const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').toLowerCase();
+// 콤마로 여러 관리자 이메일을 등록할 수 있다. 예: "a@x.com,b@y.com"
+const ADMIN_EMAILS = new Set(
+  (process.env.ADMIN_EMAIL || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
+function isAdminEmail(email) {
+  return ADMIN_EMAILS.has((email || '').toLowerCase());
+}
 
 // 성능 모드 하나로 모델 + 사고 강도를 함께 정한다. 전부 Gemini 무료 티어 모델이다.
 const PERFORMANCE_MODES = {
@@ -116,7 +125,7 @@ app.post('/api/signup', authLimiter, async (req, res) => {
   const passwordHash = await bcrypt.hash(password, 10);
   const user = await store.createUser(email, passwordHash);
   req.session.userId = user.id;
-  req.session.isAdmin = email.toLowerCase() === ADMIN_EMAIL;
+  req.session.isAdmin = isAdminEmail(email);
   res.json({ email: user.email, isAdmin: req.session.isAdmin });
 });
 
@@ -130,7 +139,7 @@ app.post('/api/login', authLimiter, async (req, res) => {
     return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' });
   }
   req.session.userId = user.id;
-  req.session.isAdmin = user.email.toLowerCase() === ADMIN_EMAIL;
+  req.session.isAdmin = isAdminEmail(user.email);
   res.json({ email: user.email, isAdmin: req.session.isAdmin });
 });
 
@@ -179,7 +188,7 @@ app.get('/auth/google/callback', async (req, res) => {
 
     const user = await store.findOrCreateGoogleUser(payload.email.toLowerCase(), payload.sub);
     req.session.userId = user.id;
-    req.session.isAdmin = user.email.toLowerCase() === ADMIN_EMAIL;
+    req.session.isAdmin = isAdminEmail(user.email);
     res.redirect('/');
   } catch (err) {
     console.error('Google 로그인 실패:', err);
