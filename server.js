@@ -233,6 +233,10 @@ app.get('/api/admin/conversations', requireAdmin, async (req, res) => {
   res.json(await store.getAllConversationsWithEmails());
 });
 
+app.get('/api/admin/usage', requireAdmin, async (req, res) => {
+  res.json(await store.getUsageSummary());
+});
+
 app.post('/api/conversations', requireAuth, async (req, res) => {
   const { category } = req.body || {};
   const conversation = await store.createConversation(req.session.userId, category);
@@ -344,16 +348,21 @@ async function streamAndRespond(req, res, contents, settings, onComplete) {
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     let fullText = '';
+    let totalTokens = null;
     while (!result.done) {
       if (aborted) break;
       if (result.value?.text) {
         fullText += result.value.text;
         res.write(result.value.text);
       }
+      // 사용량은 보통 마지막 청크에만 누적치로 들어오므로, 매번 갱신해 마지막 값을 남긴다.
+      if (typeof result.value?.usageMetadata?.totalTokenCount === 'number') {
+        totalTokens = result.value.usageMetadata.totalTokenCount;
+      }
       result = await iterator.next();
     }
 
-    if (fullText) await onComplete(fullText);
+    if (fullText) await onComplete(fullText, totalTokens);
     res.end();
   } catch (err) {
     if (res.headersSent) {
@@ -395,9 +404,9 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   const settings = await store.getSettings(req.session.userId);
   const contents = toGeminiContents([...conversation.turns, { role: 'user', content: message, attachments }]);
 
-  await streamAndRespond(req, res, contents, settings, async (fullText) => {
+  await streamAndRespond(req, res, contents, settings, async (fullText, totalTokens) => {
     await store.appendTurn(req.session.userId, conversationId, 'user', message, attachments);
-    await store.appendTurn(req.session.userId, conversationId, 'model', fullText);
+    await store.appendTurn(req.session.userId, conversationId, 'model', fullText, undefined, totalTokens);
   });
 });
 
@@ -415,8 +424,8 @@ app.post('/api/chat/regenerate', requireAuth, async (req, res) => {
   const settings = await store.getSettings(req.session.userId);
   const contents = toGeminiContents(conversation.turns);
 
-  await streamAndRespond(req, res, contents, settings, async (fullText) => {
-    await store.appendTurn(req.session.userId, conversationId, 'model', fullText);
+  await streamAndRespond(req, res, contents, settings, async (fullText, totalTokens) => {
+    await store.appendTurn(req.session.userId, conversationId, 'model', fullText, undefined, totalTokens);
   });
 });
 

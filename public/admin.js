@@ -10,15 +10,50 @@ function formatTime(iso) {
   return new Date(iso).toLocaleString('ko-KR');
 }
 
+function renderUsageTable(usage) {
+  const section = document.createElement('section');
+  section.className = 'admin-user';
+
+  const header = document.createElement('div');
+  header.className = 'admin-user-header';
+  header.innerHTML = '<strong>사용량 요약</strong><span>비공개 프로젝트의 토큰 사용량도 포함됩니다 (내용은 비공개)</span>';
+  section.appendChild(header);
+
+  if (usage.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'admin-empty';
+    empty.textContent = '아직 사용 기록이 없습니다.';
+    section.appendChild(empty);
+    return section;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'admin-usage-table';
+  table.innerHTML = `
+    <thead><tr><th>이메일</th><th>프로젝트 수</th><th>누적 토큰 사용량</th></tr></thead>
+    <tbody>${usage
+      .map((u) => `<tr><td>${u.email}</td><td>${u.conversationCount}</td><td>${u.totalTokens.toLocaleString('ko-KR')}</td></tr>`)
+      .join('')}</tbody>
+  `;
+  section.appendChild(table);
+  return section;
+}
+
 async function load() {
-  const res = await fetch('/api/admin/conversations');
-  if (res.status === 401) return (location.href = '/login.html');
-  if (res.status === 403) return (location.href = '/');
-  const users = await res.json();
+  const [convRes, usageRes] = await Promise.all([fetch('/api/admin/conversations'), fetch('/api/admin/usage')]);
+  if (convRes.status === 401) return (location.href = '/login.html');
+  if (convRes.status === 403) return (location.href = '/');
+  const users = await convRes.json();
+  const usage = usageRes.ok ? await usageRes.json() : [];
 
   content.innerHTML = '';
+  content.appendChild(renderUsageTable(usage));
+
   if (users.length === 0) {
-    content.textContent = '아직 가입한 사용자가 없습니다.';
+    const empty = document.createElement('p');
+    empty.className = 'admin-empty';
+    empty.textContent = '아직 가입한 사용자가 없습니다.';
+    content.appendChild(empty);
     return;
   }
 

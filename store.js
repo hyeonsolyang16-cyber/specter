@@ -39,6 +39,7 @@ async function init() {
     ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE;
     ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE turns ADD COLUMN IF NOT EXISTS tokens INTEGER;
   `);
 }
 const ready = init().catch((err) => {
@@ -227,7 +228,7 @@ async function deleteConversation(userId, conversationId) {
   return rowCount > 0;
 }
 
-async function appendTurn(userId, conversationId, role, content, attachments) {
+async function appendTurn(userId, conversationId, role, content, attachments, tokens) {
   await ready;
   if (role === 'user') {
     const countRes = await pool.query('SELECT COUNT(*)::int AS n FROM turns WHERE conversation_id = $1', [
@@ -238,12 +239,34 @@ async function appendTurn(userId, conversationId, role, content, attachments) {
       await pool.query('UPDATE conversations SET title = $2 WHERE id = $1', [conversationId, title]);
     }
   }
-  await pool.query('INSERT INTO turns (conversation_id, role, content, attachments) VALUES ($1, $2, $3, $4)', [
+  await pool.query('INSERT INTO turns (conversation_id, role, content, attachments, tokens) VALUES ($1, $2, $3, $4, $5)', [
     conversationId,
     role,
     content,
     attachments ? JSON.stringify(attachments) : null,
+    typeof tokens === 'number' ? tokens : null,
   ]);
+}
+
+// 관리자용 사용량 요약: 유저별 대화 수와 누적 토큰 사용량(비공개 대화 포함, 내용은 노출하지 않음).
+async function getUsageSummary() {
+  await ready;
+  const { rows } = await pool.query(`
+    SELECT u.email, u.created_at,
+      COUNT(DISTINCT c.id)::int AS conversation_count,
+      COALESCE(SUM(t.tokens), 0)::bigint AS total_tokens
+    FROM users u
+    LEFT JOIN conversations c ON c.user_id = u.id
+    LEFT JOIN turns t ON t.conversation_id = c.id AND t.role = 'model'
+    GROUP BY u.id
+    ORDER BY total_tokens DESC
+  `);
+  return rows.map((r) => ({
+    email: r.email,
+    createdAt: r.created_at,
+    conversationCount: r.conversation_count,
+    totalTokens: Number(r.total_tokens),
+  }));
 }
 
 async function getAllConversationsWithEmails() {
@@ -286,4 +309,5 @@ module.exports = {
   rewindConversation,
   appendTurn,
   getAllConversationsWithEmails,
+  getUsageSummary,
 };
