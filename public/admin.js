@@ -10,31 +10,45 @@ function formatTime(iso) {
   return new Date(iso).toLocaleString('ko-KR');
 }
 
-function renderUsageTable(usage) {
-  const section = document.createElement('section');
-  section.className = 'admin-user';
+// 이메일/제목처럼 사용자가 직접 입력한 값은 절대 innerHTML로 넣지 않는다.
+// (관리자 화면에 그대로 렌더링되면 저장형 XSS로 이어질 수 있다.) 항상 textContent만 사용한다.
+function el(tag, className, text) {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
 
-  const header = document.createElement('div');
-  header.className = 'admin-user-header';
-  header.innerHTML = '<strong>사용량 요약</strong><span>비공개 프로젝트의 토큰 사용량도 포함됩니다 (내용은 비공개)</span>';
+function renderUsageTable(usage) {
+  const section = el('section', 'admin-user');
+
+  const header = el('div', 'admin-user-header');
+  header.appendChild(el('strong', null, '사용량 요약'));
+  header.appendChild(el('span', null, '비공개 프로젝트의 토큰 사용량도 포함됩니다 (내용은 비공개)'));
   section.appendChild(header);
 
   if (usage.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'admin-empty';
-    empty.textContent = '아직 사용 기록이 없습니다.';
-    section.appendChild(empty);
+    section.appendChild(el('p', 'admin-empty', '아직 사용 기록이 없습니다.'));
     return section;
   }
 
   const table = document.createElement('table');
   table.className = 'admin-usage-table';
-  table.innerHTML = `
-    <thead><tr><th>이메일</th><th>프로젝트 수</th><th>누적 토큰 사용량</th></tr></thead>
-    <tbody>${usage
-      .map((u) => `<tr><td>${u.email}</td><td>${u.conversationCount}</td><td>${u.totalTokens.toLocaleString('ko-KR')}</td></tr>`)
-      .join('')}</tbody>
-  `;
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  ['이메일', '프로젝트 수', '누적 토큰 사용량'].forEach((t) => headRow.appendChild(el('th', null, t)));
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  for (const u of usage) {
+    const row = document.createElement('tr');
+    row.appendChild(el('td', null, u.email));
+    row.appendChild(el('td', null, String(u.conversationCount)));
+    row.appendChild(el('td', null, u.totalTokens.toLocaleString('ko-KR')));
+    tbody.appendChild(row);
+  }
+  table.appendChild(tbody);
   section.appendChild(table);
   return section;
 }
@@ -50,56 +64,42 @@ async function load() {
   content.appendChild(renderUsageTable(usage));
 
   if (users.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'admin-empty';
-    empty.textContent = '아직 가입한 사용자가 없습니다.';
-    content.appendChild(empty);
+    content.appendChild(el('p', 'admin-empty', '아직 가입한 사용자가 없습니다.'));
     return;
   }
 
   for (const u of users) {
     const totalTurns = u.conversations.reduce((sum, c) => sum + c.turns.length, 0);
 
-    const section = document.createElement('section');
-    section.className = 'admin-user';
+    const section = el('section', 'admin-user');
 
-    const header = document.createElement('div');
-    header.className = 'admin-user-header';
-    header.innerHTML = `<strong>${u.email}</strong><span>가입일 ${formatTime(u.createdAt)} · 프로젝트 ${u.conversations.length}개 · 메시지 ${totalTurns}개</span>`;
+    const header = el('div', 'admin-user-header');
+    header.appendChild(el('strong', null, u.email));
+    header.appendChild(
+      el('span', null, `가입일 ${formatTime(u.createdAt)} · 프로젝트 ${u.conversations.length}개 · 메시지 ${totalTurns}개`)
+    );
     section.appendChild(header);
 
     if (u.conversations.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'admin-empty';
-      empty.textContent = '아직 생성한 프로젝트가 없습니다.';
-      section.appendChild(empty);
+      section.appendChild(el('p', 'admin-empty', '아직 생성한 프로젝트가 없습니다.'));
     }
 
     for (const c of u.conversations) {
-      const project = document.createElement('div');
-      project.className = 'admin-project';
+      const project = el('div', 'admin-project');
 
-      const projectHeader = document.createElement('div');
-      projectHeader.className = 'admin-project-header';
-      projectHeader.innerHTML = `<span>${c.title}</span><span class="admin-project-meta">${formatTime(c.createdAt)} · ${c.turns.length}개 메시지</span>`;
+      const projectHeader = el('div', 'admin-project-header');
+      projectHeader.appendChild(el('span', null, c.title));
+      projectHeader.appendChild(el('span', 'admin-project-meta', `${formatTime(c.createdAt)} · ${c.turns.length}개 메시지`));
       project.appendChild(projectHeader);
 
       if (c.turns.length === 0) {
-        const empty = document.createElement('p');
-        empty.className = 'admin-empty';
-        empty.textContent = '아직 대화 기록이 없습니다.';
-        project.appendChild(empty);
+        project.appendChild(el('p', 'admin-empty', '아직 대화 기록이 없습니다.'));
       } else {
-        const list = document.createElement('div');
-        list.className = 'admin-turns';
+        const list = el('div', 'admin-turns');
         for (const t of c.turns) {
-          const turn = document.createElement('div');
-          turn.className = `admin-turn ${t.role}`;
-          turn.innerHTML = `<span class="admin-turn-meta">${t.role === 'user' ? '사용자' : 'Specter'} · ${formatTime(t.at)}</span>`;
-          const body = document.createElement('div');
-          body.className = 'admin-turn-body';
-          body.textContent = t.content;
-          turn.appendChild(body);
+          const turn = el('div', `admin-turn ${t.role}`);
+          turn.appendChild(el('span', 'admin-turn-meta', `${t.role === 'user' ? '사용자' : 'Specter'} · ${formatTime(t.at)}`));
+          turn.appendChild(el('div', 'admin-turn-body', t.content));
           list.appendChild(turn);
         }
         project.appendChild(list);

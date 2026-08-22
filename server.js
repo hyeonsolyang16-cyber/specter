@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
+const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const { GoogleGenAI, ApiError } = require('@google/genai');
@@ -33,7 +34,11 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // 세션을 DB에 저장해 재배포(=서버 재시작)해도 로그인이 풀리지 않도록 한다.
 const sessionPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
+// Render는 TLS를 프록시 단에서 끝내고 내부로는 평문 HTTP로 전달하므로, trust proxy를
+// 켜야 X-Forwarded-Proto를 보고 요청이 HTTPS인지 정확히 판단해 secure 쿠키가 정상 동작한다.
+const IS_PRODUCTION = !!process.env.RENDER;
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '25mb' }));
 app.use(
   session({
@@ -41,42 +46,69 @@ app.use(
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    cookie: { maxAge: 1000 * 60 * 60 * 24 * 7 },
+    proxy: true,
+    cookie: {
+      maxAge: 1000 * 60 * 60 * 24 * 7,
+      secure: IS_PRODUCTION,
+      sameSite: 'lax',
+      httpOnly: true,
+    },
   })
 );
 
+// 로그인 필요 응답은 브라우저/뒤로가기 캐시에 남지 않게 한다.
+// (로그아웃 후 뒤로가기로 이전 화면이 그대로 보이는 걸 막기 위함)
+function noStore(req, res, next) {
+  res.set('Cache-Control', 'no-store');
+  next();
+}
+
 function requireAuth(req, res, next) {
+  res.set('Cache-Control', 'no-store');
   if (!req.session.userId) return res.status(401).json({ error: '로그인이 필요합니다.' });
   next();
 }
 
 function requireAdmin(req, res, next) {
+  res.set('Cache-Control', 'no-store');
   if (!req.session.userId) return res.status(401).json({ error: '로그인이 필요합니다.' });
   if (!req.session.isAdmin) return res.status(403).json({ error: '관리자만 접근할 수 있습니다.' });
   next();
 }
 
+// 로그인 시도를 제한해 무차별 대입 공격을 막는다.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: '시도 횟수가 너무 많습니다. 잠시 후 다시 시도해주세요.' },
+});
+
 // 로그인 안 된 사용자가 채팅/관리자 페이지로 바로 들어오면 로그인 화면으로 보낸다.
-app.get('/', (req, res, next) => {
+app.get('/', noStore, (req, res, next) => {
   if (!req.session.userId) return res.redirect('/login.html');
   next();
 });
-app.get('/admin.html', (req, res, next) => {
+app.get('/admin.html', noStore, (req, res, next) => {
   if (!req.session.userId) return res.redirect('/login.html');
   if (!req.session.isAdmin) return res.redirect('/');
   next();
 });
-app.get('/settings.html', (req, res, next) => {
+app.get('/settings.html', noStore, (req, res, next) => {
   if (!req.session.userId) return res.redirect('/login.html');
   next();
 });
 
 app.use(express.static('public'));
 
-app.post('/api/signup', async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password || password.length < 8) {
-    return res.status(400).json({ error: '이메일과 8자 이상의 비밀번호를 입력하세요.' });
+const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
+app.post('/api/signup', authLimiter, async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const { password } = req.body || {};
+  if (!EMAIL_RE.test(email) || email.length > 254 || !password || password.length < 8) {
+    return res.status(400).json({ error: '올바른 이메일과 8자 이상의 비밀번호를 입력하세요.' });
   }
   if (await store.findUserByEmail(email)) {
     return res.status(409).json({ error: '이미 가입된 이메일입니다.' });
@@ -88,7 +120,7 @@ app.post('/api/signup', async (req, res) => {
   res.json({ email: user.email, isAdmin: req.session.isAdmin });
 });
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', authLimiter, async (req, res) => {
   const { email, password } = req.body || {};
   const user = await store.findUserByEmail(email || '');
   if (!user || !user.passwordHash) {
@@ -141,9 +173,11 @@ app.get('/auth/google/callback', async (req, res) => {
     // id_token은 우리 client_secret으로 인증된 서버-서버 호출로 구글에서 직접 받은 값이라
     // (사용자 입력이 아니라) 별도 서명 검증 없이 payload만 디코딩해도 안전하다.
     const payload = JSON.parse(Buffer.from(tokenData.id_token.split('.')[1], 'base64url').toString('utf8'));
+    // 방어적 검증: 우리 client_id로 발급된 토큰이 맞는지, 이메일이 확인된 계정인지 확인한다.
+    if (payload.aud !== GOOGLE_CLIENT_ID) throw new Error('토큰의 발급 대상이 일치하지 않습니다.');
     if (!payload.email || !payload.email_verified) throw new Error('구글 이메일이 확인되지 않았습니다.');
 
-    const user = await store.findOrCreateGoogleUser(payload.email, payload.sub);
+    const user = await store.findOrCreateGoogleUser(payload.email.toLowerCase(), payload.sub);
     req.session.userId = user.id;
     req.session.isAdmin = user.email.toLowerCase() === ADMIN_EMAIL;
     res.redirect('/');

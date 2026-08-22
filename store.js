@@ -236,7 +236,12 @@ async function appendTurn(userId, conversationId, role, content, attachments, to
     ]);
     if (countRes.rows[0].n === 0) {
       const title = content ? content.slice(0, 30) + (content.length > 30 ? '…' : '') : '[이미지]';
-      await pool.query('UPDATE conversations SET title = $2 WHERE id = $1', [conversationId, title]);
+      // 소유자 확인 없이 conversationId만으로 갱신되지 않도록 user_id도 함께 검사한다(방어적).
+      await pool.query('UPDATE conversations SET title = $2 WHERE id = $1 AND user_id = $3', [
+        conversationId,
+        title,
+        userId,
+      ]);
     }
   }
   await pool.query('INSERT INTO turns (conversation_id, role, content, attachments, tokens) VALUES ($1, $2, $3, $4, $5)', [
