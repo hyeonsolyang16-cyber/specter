@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
+const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const { GoogleGenAI, ApiError } = require('@google/genai');
 const { buildSystemPrompt } = require('./system-prompt');
@@ -28,10 +30,14 @@ if (!process.env.SESSION_SECRET) {
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+// 세션을 DB에 저장해 재배포(=서버 재시작)해도 로그인이 풀리지 않도록 한다.
+const sessionPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+
 const app = express();
 app.use(express.json({ limit: '25mb' }));
 app.use(
   session({
+    store: new pgSession({ pool: sessionPool, tableName: 'session', createTableIfMissing: true }),
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
