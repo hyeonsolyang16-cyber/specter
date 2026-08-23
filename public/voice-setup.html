@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>음성 호출 설정 - Specter</title>
+<link rel="icon" type="image/png" href="logo.png">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" sizes="180x180" href="logo.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Specter">
+<meta name="theme-color" content="#344E41">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="admin-page">
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark"><img src="logo.png" alt="Specter"></span>
+      <h1>음성 호출 설정</h1>
+    </div>
+    <div class="header-actions">
+      <a href="/settings.html" class="reset-btn">설정으로</a>
+    </div>
+  </header>
+
+  <main class="admin-content">
+    <section class="settings-section">
+      <h2>준비물</h2>
+      <p class="settings-desc">설정 → 연동 탭에서 "구글 캘린더 연결"과 "개인 접속 토큰"을 먼저 완료하세요. 아래 설정에 토큰이 필요합니다.</p>
+    </section>
+
+    <section class="settings-section">
+      <h2>아이폰 (단축어 앱)</h2>
+      <ol class="voice-setup-steps">
+        <li>기본 설치된 <b>"단축어"</b> 앱을 엽니다.</li>
+        <li>오른쪽 위 <b>+</b>를 눌러 새 단축어를 만듭니다.</li>
+        <li><b>"동작 추가"</b> → "받아쓰기 텍스트"를 검색해서 추가합니다.</li>
+        <li>다시 "동작 추가" → <b>"URL의 콘텐츠 가져오기"</b>를 추가합니다.
+          <ul>
+            <li>URL: <code>https://specter-js8n.onrender.com/api/voice-command</code></li>
+            <li>방법: <b>POST</b></li>
+            <li>헤더 추가: <code>Authorization</code> = <code>Bearer 내_토큰</code></li>
+            <li>요청 본문: <b>JSON</b> 선택 → 키 <code>text</code>에 값으로 위 "받아쓰기 텍스트" 변수를 넣습니다.</li>
+          </ul>
+        </li>
+        <li>다시 "동작 추가" → <b>"사전에서 값 가져오기"</b>로 방금 받은 결과에서 <code>reply</code> 키를 꺼냅니다.</li>
+        <li>다시 "동작 추가" → <b>"텍스트 말하기"</b>를 추가하고, 방금 꺼낸 <code>reply</code> 값을 넣습니다.</li>
+        <li>단축어 이름을 정확히 <b>"스펙터"</b>로 저장합니다.</li>
+        <li>이제 <b>"헤이 시리, 스펙터"</b>라고 말하면 실행됩니다. (말한 뒤 몇 초간 받아쓰기가 진행되니, 이어서 바로 명령을 말하면 됩니다)</li>
+      </ol>
+    </section>
+
+    <section class="settings-section">
+      <h2>안드로이드</h2>
+      <p class="settings-desc">
+        안드로이드의 구글 어시스턴트 루틴은 인증 헤더가 포함된 요청을 직접 보내는 기능이 없어서,
+        <b>"HTTP Shortcuts"</b>(무료, Play 스토어) 같은 앱을 하나 더 설치해야 합니다.
+      </p>
+      <ol class="voice-setup-steps">
+        <li>Play 스토어에서 <b>HTTP Shortcuts</b> 설치</li>
+        <li>새 단축어 생성 → URL에 <code>https://specter-js8n.onrender.com/api/voice-command</code>, 메서드 <b>POST</b></li>
+        <li>헤더에 <code>Authorization: Bearer 내_토큰</code>, <code>Content-Type: application/json</code> 추가</li>
+        <li>본문(Body)에 <code>{"text": "{{음성입력}}"}</code> 형태로 설정 (앱 내 변수 입력 기능 사용)</li>
+        <li>홈 화면에 위젯으로 추가하면 아이콘 탭 한 번으로 음성 입력 → 일정 추가까지 됩니다</li>
+      </ol>
+      <p class="settings-desc">"헤이 구글" 같은 완전한 음성 호출은 안드로이드도 서드파티 앱만으로는 제한적입니다. 아이콘 탭 방식이 가장 안정적입니다.</p>
+    </section>
+
+    <section class="settings-section">
+      <h2>참고</h2>
+      <p class="settings-desc">토큰은 비밀번호와 같습니다. 단축어 설정 화면 밖으로 캡처/공유하지 마세요. 유출된 것 같으면 설정 → 연동에서 즉시 재발급하세요.</p>
+    </section>
+  </main>
+</div>
+</body>
+</html>

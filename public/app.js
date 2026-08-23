@@ -220,6 +220,15 @@ if (SpeechRecognitionCtor) {
       input.focus();
     }
   });
+
+  // 홈 화면 "음성으로 물어보기" 바로가기(/?voice=1)로 들어오면 마이크를 바로 켠다.
+  // 브라우저에 따라 자동 시작이 제스처 요구로 막힐 수 있어 실패해도 조용히 넘어간다.
+  if (new URLSearchParams(location.search).get('voice') === '1') {
+    try {
+      recognition.start();
+    } catch {}
+    history.replaceState(null, '', location.pathname);
+  }
 }
 
 // 음성 출력(TTS) — Web Speech Synthesis API. 대부분의 최신 브라우저가 지원한다.

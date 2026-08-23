@@ -10,5 +10,14 @@
   "icons": [
     { "src": "/logo.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" },
     { "src": "/logo.png", "sizes": "1024x1024", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "음성으로 물어보기",
+      "short_name": "음성 입력",
+      "description": "마이크가 바로 켜진 상태로 Specter를 엽니다",
+      "url": "/?voice=1",
+      "icons": [{ "src": "/logo.png", "sizes": "1024x1024", "type": "image/png" }]
+    }
   ]
 }

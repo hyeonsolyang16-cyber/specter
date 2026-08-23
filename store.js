@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const crypto = require('crypto');
 
 if (!process.env.DATABASE_URL) {
   console.error('DATABASE_URL이 설정되지 않았습니다. .env 파일을 확인하세요.');
@@ -46,6 +47,8 @@ async function init() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE;
     ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS tokens INTEGER;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS google_calendar_refresh_token TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS api_token TEXT UNIQUE;
     CREATE TABLE IF NOT EXISTS alerts (
       id SERIAL PRIMARY KEY,
       level TEXT NOT NULL,
@@ -90,6 +93,8 @@ function rowToUser(row) {
     passwordHash: row.password_hash,
     createdAt: row.created_at,
     settings: row.settings,
+    googleCalendarRefreshToken: row.google_calendar_refresh_token,
+    apiToken: row.api_token,
   };
 }
 
@@ -336,6 +341,41 @@ async function consumePasswordReset(token) {
   return row.user_id;
 }
 
+// ---- 구글 캘린더 연동 / 개인 접속 토큰 (음성 명령용) ----
+
+async function saveGoogleCalendarToken(userId, refreshToken) {
+  await ready;
+  await pool.query('UPDATE users SET google_calendar_refresh_token = $2 WHERE id = $1', [userId, refreshToken]);
+}
+
+async function disconnectGoogleCalendar(userId) {
+  await ready;
+  await pool.query('UPDATE users SET google_calendar_refresh_token = NULL WHERE id = $1', [userId]);
+}
+
+// 시리 단축어 등 브라우저 세션 없이 호출하는 곳에서 쓰는 개인 토큰. 없으면 새로 만든다.
+async function getOrCreateApiToken(userId) {
+  await ready;
+  const existing = await pool.query('SELECT api_token FROM users WHERE id = $1', [userId]);
+  if (existing.rows[0]?.api_token) return existing.rows[0].api_token;
+  const token = 'spk_' + crypto.randomBytes(24).toString('hex');
+  await pool.query('UPDATE users SET api_token = $2 WHERE id = $1', [userId, token]);
+  return token;
+}
+
+async function regenerateApiToken(userId) {
+  await ready;
+  const token = 'spk_' + crypto.randomBytes(24).toString('hex');
+  await pool.query('UPDATE users SET api_token = $2 WHERE id = $1', [userId, token]);
+  return token;
+}
+
+async function findUserByApiToken(token) {
+  await ready;
+  const { rows } = await pool.query('SELECT * FROM users WHERE api_token = $1', [token]);
+  return rows[0] ? rowToUser(rows[0]) : null;
+}
+
 module.exports = {
   findUserByEmail,
   findUserById,
@@ -358,4 +398,9 @@ module.exports = {
   getRecentAlerts,
   createPasswordReset,
   consumePasswordReset,
+  saveGoogleCalendarToken,
+  disconnectGoogleCalendar,
+  getOrCreateApiToken,
+  regenerateApiToken,
+  findUserByApiToken,
 };

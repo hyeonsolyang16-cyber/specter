@@ -215,8 +215,27 @@ app.get('/auth/google', (req, res) => {
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 });
 
+// 캘린더 연동은 로그인과 별개의 동의(오프라인 접근 + calendar 범위)가 필요하지만,
+// 콜백 주소는 그대로 재사용한다 — state로 어느 흐름인지 구분해서 구글 클라우드 콘솔에
+// 리디렉션 URI를 추가로 등록할 필요가 없게 했다.
+app.get('/auth/google-calendar/connect', requireAuth, (req, res) => {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_REDIRECT_URI) {
+    return res.redirect('/settings.html?calendar=not_configured');
+  }
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    response_type: 'code',
+    scope: 'openid email https://www.googleapis.com/auth/calendar.events',
+    access_type: 'offline',
+    prompt: 'consent',
+    state: 'calendar_connect',
+  });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+});
+
 app.get('/auth/google/callback', async (req, res) => {
-  const { code } = req.query;
+  const { code, state } = req.query;
   if (!code) return res.redirect('/login.html?error=google');
   try {
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -240,12 +259,24 @@ app.get('/auth/google/callback', async (req, res) => {
     if (payload.aud !== GOOGLE_CLIENT_ID) throw new Error('토큰의 발급 대상이 일치하지 않습니다.');
     if (!payload.email || !payload.email_verified) throw new Error('구글 이메일이 확인되지 않았습니다.');
 
+    if (state === 'calendar_connect') {
+      if (!req.session.userId) return res.redirect('/login.html');
+      if (!tokenData.refresh_token) {
+        // 이미 한 번 동의한 적이 있으면 구글이 refresh_token을 다시 안 줄 수 있다 —
+        // 그 경우 사용자가 구글 계정 권한 목록에서 스펙터 접근을 해제한 뒤 다시 시도해야 한다.
+        return res.redirect('/settings.html?calendar=no_refresh_token');
+      }
+      await store.saveGoogleCalendarToken(req.session.userId, tokenData.refresh_token);
+      return res.redirect('/settings.html?calendar=connected');
+    }
+
     const user = await store.findOrCreateGoogleUser(payload.email.toLowerCase(), payload.sub);
     req.session.userId = user.id;
     req.session.isAdmin = isAdminEmail(user.email);
     res.redirect('/');
   } catch (err) {
     console.error('Google 로그인 실패:', err);
+    if (state === 'calendar_connect') return res.redirect('/settings.html?calendar=error');
     res.redirect('/login.html?error=google');
   }
 });
@@ -412,6 +443,136 @@ app.post('/api/reset-password', authLimiter, async (req, res) => {
   const newHash = await bcrypt.hash(newPassword, 10);
   await store.updatePasswordHash(userId, newHash);
   res.json({ ok: true });
+});
+
+// ---- 구글 캘린더 연동 + 음성 명령 (시리 단축어 등에서 개인 토큰으로 호출) ----
+
+app.get('/api/calendar/status', requireAuth, async (req, res) => {
+  const user = await store.findUserById(req.session.userId);
+  res.json({ connected: !!user.googleCalendarRefreshToken });
+});
+
+app.post('/api/calendar/disconnect', requireAuth, async (req, res) => {
+  await store.disconnectGoogleCalendar(req.session.userId);
+  res.json({ ok: true });
+});
+
+app.get('/api/account/api-token', requireAuth, async (req, res) => {
+  res.json({ token: await store.getOrCreateApiToken(req.session.userId) });
+});
+
+app.post('/api/account/api-token/regenerate', requireAuth, async (req, res) => {
+  res.json({ token: await store.regenerateApiToken(req.session.userId) });
+});
+
+async function getGoogleAccessToken(refreshToken) {
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token',
+    }),
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error('구글 액세스 토큰 갱신 실패: ' + JSON.stringify(data));
+  return data.access_token;
+}
+
+async function createCalendarEvent(accessToken, event) {
+  const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(event),
+  });
+  if (!res.ok) throw new Error(`캘린더 일정 추가 실패(${res.status}): ${await res.text()}`);
+  return res.json();
+}
+
+const VOICE_EVENT_SCHEMA = {
+  type: 'object',
+  properties: {
+    understood: { type: 'boolean', description: '캘린더 일정 추가 요청으로 이해했는지 여부' },
+    title: { type: 'string' },
+    startDateTime: { type: 'string', description: 'ISO 8601, 예: 2026-08-25T14:00:00+09:00' },
+    endDateTime: { type: 'string', description: 'ISO 8601. 시간 언급이 없으면 시작 시각+1시간' },
+    reply: { type: 'string', description: '사용자에게 음성으로 들려줄 한국어 확인/안내 문장 1개' },
+  },
+  required: ['understood', 'reply'],
+};
+
+// 테스트 중 이 조합에서 두 가지 실패를 실제로 관찰했다:
+// (1) thinkingConfig 없이 큰 토큰 예산 → 모델이 title 안에서 축하 문구를 무한 반복하다 MAX_TOKENS로 끊김
+// (2) thinkingLevel 'minimal' → 내부 혼잣말이 title 필드 안으로 새어 들어감
+// thinkingLevel 'low' + temperature 0 + 문장 길이 제한 지시가 가장 안정적이었고,
+// 그래도 실패할 수 있으니 아래 파싱 후 검증에서 이상한 결과는 버린다.
+async function parseVoiceCommand(text, nowIso) {
+  const prompt = `현재 시각은 ${nowIso} (한국 표준시, UTC+9)입니다. 사용자가 음성으로 다음과 같이 말했습니다:\n"${text}"\n\n이 말이 캘린더 일정 추가 요청이면 제목과 시작/종료 시각(ISO 8601, +09:00 포함)을 뽑아내세요. 시간 언급이 없으면 1시간짜리 일정으로 가정하세요. 일정 추가 요청이 아니거나 시각을 특정할 수 없으면 understood를 false로 하고 이유를 reply에 담으세요. title과 reply는 각각 한 문장 이내로 간결하게 작성하세요.`;
+  const result = await generateWithFallback({
+    model: 'gemini-3.6-flash',
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: VOICE_EVENT_SCHEMA,
+      maxOutputTokens: 800,
+      temperature: 0,
+      thinkingConfig: { thinkingLevel: 'low' },
+    },
+  });
+
+  let parsed;
+  try {
+    parsed = JSON.parse(result.text);
+  } catch {
+    return { understood: false, reply: '요청을 이해하지 못했습니다. 다시 말씀해주세요.' };
+  }
+
+  // 모델이 혼잣말이나 반복 문구를 흘려보낼 수 있어, 비정상적으로 긴 필드는 신뢰하지 않는다.
+  if (typeof parsed.title === 'string' && parsed.title.length > 100) parsed.title = parsed.title.slice(0, 100);
+  if (typeof parsed.reply === 'string' && parsed.reply.length > 200) parsed.reply = parsed.reply.slice(0, 200);
+  if (parsed.startDateTime && Number.isNaN(new Date(parsed.startDateTime).getTime())) {
+    return { understood: false, reply: '일정 시각을 정확히 파악하지 못했습니다. 날짜와 시간을 다시 말씀해주세요.' };
+  }
+  if (parsed.endDateTime && Number.isNaN(new Date(parsed.endDateTime).getTime())) {
+    parsed.endDateTime = null;
+  }
+  return parsed;
+}
+
+// 시리 단축어 등 브라우저 세션이 없는 곳에서 개인 토큰(Authorization: Bearer)으로 호출한다.
+app.post('/api/voice-command', async (req, res) => {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) return res.status(401).json({ error: '인증 토큰이 필요합니다.' });
+  const user = await store.findUserByApiToken(token);
+  if (!user) return res.status(401).json({ error: '유효하지 않은 토큰입니다.' });
+
+  const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+  if (!text) return res.status(400).json({ error: 'text가 필요합니다.' });
+
+  if (!user.googleCalendarRefreshToken) {
+    return res.status(400).json({ ok: false, reply: '먼저 스펙터 설정에서 구글 캘린더를 연결해주세요.' });
+  }
+
+  try {
+    const parsed = await parseVoiceCommand(text, new Date().toISOString());
+    if (!parsed.understood || !parsed.startDateTime) {
+      return res.json({ ok: false, reply: parsed.reply || '무슨 일정인지 이해하지 못했습니다.' });
+    }
+    const accessToken = await getGoogleAccessToken(user.googleCalendarRefreshToken);
+    await createCalendarEvent(accessToken, {
+      summary: parsed.title || '새 일정',
+      start: { dateTime: parsed.startDateTime },
+      end: { dateTime: parsed.endDateTime || parsed.startDateTime },
+    });
+    res.json({ ok: true, reply: parsed.reply || '일정을 추가했습니다.' });
+  } catch (err) {
+    console.error('음성 명령 처리 실패:', err);
+    store.logAlert('error', `음성 명령 처리 실패: ${(err.message || String(err)).slice(0, 300)}`).catch(() => {});
+    res.status(502).json({ ok: false, reply: '일정 추가에 실패했습니다. 잠시 후 다시 시도해주세요.' });
+  }
 });
 
 app.get('/api/admin/conversations', requireAdmin, async (req, res) => {

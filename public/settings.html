@@ -32,6 +32,7 @@
       <button type="button" class="settings-nav-item active" data-tab="ai">AI 동작</button>
       <button type="button" class="settings-nav-item" data-tab="memory">메모리</button>
       <button type="button" class="settings-nav-item" data-tab="display">화면</button>
+      <button type="button" class="settings-nav-item" data-tab="integrations">연동</button>
       <button type="button" class="settings-nav-item" data-tab="account">계정</button>
     </nav>
 
@@ -89,6 +90,35 @@
             <button type="button" data-value="light">라이트</button>
             <button type="button" data-value="dark">다크</button>
           </div>
+        </section>
+      </div>
+
+      <div class="settings-panel" data-panel="integrations" hidden>
+        <section class="settings-section">
+          <h2>구글 캘린더</h2>
+          <p class="settings-desc">연결하면 음성 명령("8월 25일 오후 2시에 미팅 추가해줘")으로 실제 구글 캘린더에 일정을 추가할 수 있습니다. 폰의 캘린더 앱·위젯과 자동으로 동기화됩니다.</p>
+          <p id="calendar-status" class="settings-success"></p>
+          <div class="settings-inline-actions">
+            <a href="/auth/google-calendar/connect" id="calendar-connect-btn" class="reset-btn">구글 캘린더 연결</a>
+            <button type="button" id="calendar-disconnect-btn" class="reset-btn" hidden>연결 해제</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h2>개인 접속 토큰</h2>
+          <p class="settings-desc">시리 단축어 등 브라우저 로그인 없이 스펙터를 호출할 때 이 토큰을 사용합니다. 비밀번호처럼 안전하게 보관하세요.</p>
+          <div class="settings-inline-actions">
+            <input type="text" id="api-token-input" class="mode-select" readonly>
+            <button type="button" id="api-token-copy-btn" class="reset-btn">복사</button>
+            <button type="button" id="api-token-regen-btn" class="reset-btn">재발급</button>
+          </div>
+          <p id="api-token-success" class="settings-success"></p>
+        </section>
+
+        <section class="settings-section">
+          <h2>음성으로 호출하기</h2>
+          <p class="settings-desc">아이폰/안드로이드에서 "헤이 시리, 스펙터" 같은 음성 명령으로 캘린더에 일정을 추가하려면 폰에서 한 번 설정이 필요합니다.</p>
+          <a href="/voice-setup.html" class="reset-btn">설정 방법 보기</a>
         </section>
       </div>
 

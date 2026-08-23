@@ -10,6 +10,13 @@ const passwordError = document.getElementById('password-error');
 const passwordSuccess = document.getElementById('password-success');
 const logoutBtn = document.getElementById('logout-btn');
 const settingsNav = document.getElementById('settings-nav');
+const calendarStatus = document.getElementById('calendar-status');
+const calendarConnectBtn = document.getElementById('calendar-connect-btn');
+const calendarDisconnectBtn = document.getElementById('calendar-disconnect-btn');
+const apiTokenInput = document.getElementById('api-token-input');
+const apiTokenCopyBtn = document.getElementById('api-token-copy-btn');
+const apiTokenRegenBtn = document.getElementById('api-token-regen-btn');
+const apiTokenSuccess = document.getElementById('api-token-success');
 
 logoutBtn.addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
@@ -92,6 +99,59 @@ passwordForm.addEventListener('submit', async (e) => {
   passwordForm.reset();
 });
 
+async function loadCalendarStatus() {
+  const res = await fetch('/api/calendar/status');
+  if (!res.ok) return;
+  const { connected } = await res.json();
+  calendarStatus.textContent = connected ? '연결됨 ✓' : '아직 연결되지 않았습니다.';
+  calendarConnectBtn.hidden = connected;
+  calendarDisconnectBtn.hidden = !connected;
+}
+
+calendarDisconnectBtn.addEventListener('click', async () => {
+  if (!confirm('구글 캘린더 연결을 해제할까요? 음성 명령으로 일정 추가가 안 됩니다.')) return;
+  await fetch('/api/calendar/disconnect', { method: 'POST' });
+  loadCalendarStatus();
+});
+
+async function loadApiToken() {
+  const res = await fetch('/api/account/api-token');
+  if (!res.ok) return;
+  const { token } = await res.json();
+  apiTokenInput.value = token;
+}
+
+apiTokenCopyBtn.addEventListener('click', async () => {
+  await navigator.clipboard.writeText(apiTokenInput.value);
+  apiTokenSuccess.textContent = '복사되었습니다.';
+  setTimeout(() => (apiTokenSuccess.textContent = ''), 2000);
+});
+
+apiTokenRegenBtn.addEventListener('click', async () => {
+  if (!confirm('토큰을 재발급하면 기존 토큰으로 만든 단축어는 더 이상 동작하지 않습니다. 계속할까요?')) return;
+  const res = await fetch('/api/account/api-token/regenerate', { method: 'POST' });
+  const { token } = await res.json();
+  apiTokenInput.value = token;
+  apiTokenSuccess.textContent = '재발급되었습니다. 단축어에도 새 토큰을 반영하세요.';
+  setTimeout(() => (apiTokenSuccess.textContent = ''), 3000);
+});
+
+function checkCalendarQueryParam() {
+  const params = new URLSearchParams(location.search);
+  const calendarParam = params.get('calendar');
+  if (!calendarParam) return;
+  const messages = {
+    connected: '구글 캘린더가 연결되었습니다.',
+    no_refresh_token: '이미 한 번 연결한 적이 있어 다시 동의가 필요합니다. 구글 계정 설정에서 스펙터 접근 권한을 해제한 뒤 다시 시도해주세요.',
+    error: '구글 캘린더 연결에 실패했습니다.',
+    not_configured: '구글 로그인이 아직 설정되지 않아 캘린더 연동을 쓸 수 없습니다.',
+  };
+  if (messages[calendarParam]) {
+    calendarStatus.textContent = messages[calendarParam];
+  }
+  history.replaceState(null, '', location.pathname);
+}
+
 async function init() {
   const res = await fetch('/api/settings');
   if (res.status === 401) return (location.href = '/login.html');
@@ -102,6 +162,9 @@ async function init() {
   markActive(themeOptions, settings.theme);
   memoryInput.value = settings.memory || '';
   autoMemoryToggle.checked = !!settings.autoMemory;
+  checkCalendarQueryParam();
+  await loadCalendarStatus();
+  await loadApiToken();
 }
 
 init();
