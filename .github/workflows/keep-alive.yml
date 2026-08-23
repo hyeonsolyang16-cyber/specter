@@ -1,0 +1,37 @@
+name: Keep Specter awake (self-relay)
+
+# schedule(크론)은 GitHub이 실제로 50~100분씩 지연시켜서(실측 확인됨) 15분 안에
+# 다시 깨워야 하는 이 용도엔 못 쓴다. 대신 한 번 시작되면 내부 반복문으로 직접
+# 핑을 보내고, 끝나기 전에 스스로 다음 실행을 예약(relay)하는 방식으로 우회한다.
+# 하루 종일 도는 만큼 Actions 시간을 많이 쓰므로 공개 저장소(무제한 무료)에서만 쓴다.
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+concurrency:
+  group: keep-alive-relay
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Ping every 4 minutes for 2 hours, relay near the end
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TOTAL_ITER=30
+          RELAY_AT=25
+          for i in $(seq 1 $TOTAL_ITER); do
+            curl -sf -o /dev/null https://specter-js8n.onrender.com/login.html || true
+            if [ "$i" -eq "$RELAY_AT" ]; then
+              for attempt in 1 2 3; do
+                gh workflow run "keep-alive.yml" --repo "${{ github.repository }}" && break
+                sleep 10
+              done
+            fi
+            sleep 240
+          done
