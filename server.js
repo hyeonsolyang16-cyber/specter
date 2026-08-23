@@ -7,7 +7,9 @@ const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const webpush = require('web-push');
 const { GoogleGenAI, ApiError } = require('@google/genai');
-const { buildSystemPrompt } = require('./system-prompt');
+const { buildSystemPrompt, PERSONA_PROMPTS, PERSONA_LABELS } = require('./system-prompt');
+const XLSX = require('xlsx');
+const mammoth = require('mammoth');
 const store = require('./store');
 
 // Express 4는 async 라우트 핸들러 안에서 처리 안 된 에러(unhandled rejection)를 자동으로
@@ -367,6 +369,12 @@ function compactHistory(turns) {
   return recent;
 }
 
+const OFFICE_MIME_TYPES = [
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/csv',
+];
+
 // base64 문자열 길이로 원본 바이트 크기를 역산해 개수/용량 제한을 검증한다.
 function validateAttachments(attachments) {
   if (attachments === undefined) return null;
@@ -376,8 +384,9 @@ function validateAttachments(attachments) {
   for (const a of attachments) {
     const isImage = a && typeof a.mimeType === 'string' && a.mimeType.startsWith('image/');
     const isPdf = a && a.mimeType === 'application/pdf';
-    if (!a || typeof a.data !== 'string' || !(isImage || isPdf)) {
-      return '첨부파일 형식이 올바르지 않습니다. 이미지 또는 PDF만 가능합니다.';
+    const isOffice = a && OFFICE_MIME_TYPES.includes(a.mimeType);
+    if (!a || typeof a.data !== 'string' || !(isImage || isPdf || isOffice)) {
+      return '첨부파일 형식이 올바르지 않습니다. 이미지, PDF, Excel(.xlsx), Word(.docx), CSV만 가능합니다.';
     }
     if (a.data.length * 0.75 > MAX_ATTACHMENT_BYTES) {
       return '첨부파일은 8MB 이하만 가능합니다.';
@@ -604,11 +613,16 @@ const CALENDAR_FUNCTION_DECLARATIONS = [
   },
 ];
 
-// 캘린더가 연결된 유저에게만 도구를 제공한다. 실행(execute)은 실제 구글 API를 호출한다.
-function buildCalendarToolConfig(user) {
-  if (!user?.googleCalendarRefreshToken) return null;
+// 구글 검색은 모든 유저에게 항상 제공하고(모델이 알아서 검색해 텍스트로 답한다 — 우리가
+// 실행할 필요 없음), 캘린더 도구는 연결한 유저에게만 추가한다.
+// 참고: 검색 도구와 커스텀 함수 도구를 한 요청에 같이 넣는 조합은 오늘 API 할당량 문제로
+// 라이브 검증을 못 했다 — 혹시 API가 이 조합을 거부하면 기존 에러 처리 경로(관리자 알림)로 잡힌다.
+function buildToolConfig(user) {
+  const tools = [{ googleSearch: {} }];
+  if (!user?.googleCalendarRefreshToken) return { tools, execute: null };
+  tools.push({ functionDeclarations: CALENDAR_FUNCTION_DECLARATIONS });
   return {
-    tools: [{ functionDeclarations: CALENDAR_FUNCTION_DECLARATIONS }],
+    tools,
     execute: async (name, args) => {
       const accessToken = await getGoogleAccessToken(user.googleCalendarRefreshToken);
       if (name === 'create_calendar_event') {
@@ -764,9 +778,12 @@ app.delete('/api/trash/:id', requireAuth, async (req, res) => {
 });
 
 app.get('/api/conversations/:id', requireAuth, async (req, res) => {
-  const conversation = await store.getConversation(req.session.userId, req.params.id);
-  if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
-  res.json(conversation);
+  const owned = await store.getConversation(req.session.userId, req.params.id);
+  if (owned) return res.json(owned);
+  // 소유자가 아니면 나에게 공유된 프로젝트인지 확인한다(읽기 전용).
+  const shared = await store.getSharedConversation(req.session.userId, req.params.id);
+  if (!shared) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  res.json({ ...shared, readOnly: true });
 });
 
 app.patch('/api/conversations/:id/category', requireAuth, async (req, res) => {
@@ -782,6 +799,132 @@ app.patch('/api/conversations/:id/title', requireAuth, async (req, res) => {
   const conversation = await store.renameConversation(req.session.userId, req.params.id, title.trim().slice(0, 60));
   if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
   res.json(conversation);
+});
+
+const MAX_INSTRUCTIONS_LENGTH = 4000;
+const VALID_PERSONAS = ['general', 'finance', 'legal', 'marketing'];
+
+app.patch('/api/conversations/:id/instructions', requireAuth, async (req, res) => {
+  const { instructions } = req.body || {};
+  if (typeof instructions === 'string' && instructions.length > MAX_INSTRUCTIONS_LENGTH) {
+    return res.status(400).json({ error: `지침은 ${MAX_INSTRUCTIONS_LENGTH}자 이하로 입력하세요.` });
+  }
+  const conversation = await store.setConversationInstructions(req.session.userId, req.params.id, instructions);
+  if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  res.json(conversation);
+});
+
+app.patch('/api/conversations/:id/persona', requireAuth, async (req, res) => {
+  const { persona } = req.body || {};
+  if (persona && !VALID_PERSONAS.includes(persona)) {
+    return res.status(400).json({ error: '알 수 없는 역할입니다.' });
+  }
+  const conversation = await store.setConversationPersona(req.session.userId, req.params.id, persona === 'general' ? null : persona);
+  if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  res.json(conversation);
+});
+
+app.get('/api/personas', requireAuth, (req, res) => {
+  res.json(Object.entries(PERSONA_LABELS).map(([value, label]) => ({ value, label })));
+});
+
+// ---- 프로젝트별 지식 베이스 ----
+
+const MAX_KNOWLEDGE_FILES = 10;
+const MAX_KNOWLEDGE_FILE_BYTES = 15 * 1024 * 1024;
+const KNOWLEDGE_MIME_TYPES = ['application/pdf', 'text/plain', ...OFFICE_MIME_TYPES];
+
+app.post('/api/conversations/:id/knowledge', requireAuth, async (req, res) => {
+  const { name, mimeType, data } = req.body || {};
+  if (!name || typeof data !== 'string' || !KNOWLEDGE_MIME_TYPES.includes(mimeType)) {
+    return res.status(400).json({ error: '파일 이름, 형식, 데이터가 필요합니다. (PDF, 텍스트, Excel, Word, CSV만 가능)' });
+  }
+  if (data.length * 0.75 > MAX_KNOWLEDGE_FILE_BYTES) {
+    return res.status(400).json({ error: '파일은 15MB 이하만 가능합니다.' });
+  }
+  // listKnowledgeFiles는 소유자 확인을 하지 않으므로, 먼저 소유권을 확인한 뒤에만 호출한다.
+  const conversation = await store.getConversation(req.session.userId, req.params.id);
+  if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  const existing = await store.listKnowledgeFiles(req.params.id);
+  if (existing.length >= MAX_KNOWLEDGE_FILES) {
+    return res.status(400).json({ error: `프로젝트당 참고 자료는 최대 ${MAX_KNOWLEDGE_FILES}개까지 가능합니다.` });
+  }
+  let finalMime = mimeType;
+  let finalData = data;
+  if (OFFICE_MIME_TYPES.includes(mimeType)) {
+    const [converted] = await extractOfficeAttachments([{ mimeType, data, name }]);
+    finalMime = converted.mimeType;
+    finalData = converted.data;
+  }
+  const file = await store.addKnowledgeFile(req.session.userId, req.params.id, name, finalMime, finalData);
+  if (!file) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  res.json(file);
+});
+
+app.get('/api/conversations/:id/knowledge', requireAuth, async (req, res) => {
+  const conversation = await store.getConversation(req.session.userId, req.params.id);
+  if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  const files = await store.listKnowledgeFiles(req.params.id);
+  res.json(files.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, createdAt: f.createdAt })));
+});
+
+app.delete('/api/conversations/:id/knowledge/:fileId', requireAuth, async (req, res) => {
+  const ok = await store.deleteKnowledgeFile(req.session.userId, req.params.id, req.params.fileId);
+  if (!ok) return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
+  res.json({ ok: true });
+});
+
+// ---- 대화 공유 ----
+
+app.post('/api/conversations/:id/share', requireAuth, async (req, res) => {
+  const { email } = req.body || {};
+  if (!email || typeof email !== 'string') return res.status(400).json({ error: 'email이 필요합니다.' });
+  const result = await store.shareConversation(req.session.userId, req.params.id, email.trim().toLowerCase());
+  if (result.error) return res.status(400).json({ error: result.error });
+  res.json(result);
+});
+
+app.get('/api/conversations/:id/shares', requireAuth, async (req, res) => {
+  const shares = await store.getConversationShares(req.session.userId, req.params.id);
+  if (shares === null) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  res.json(shares);
+});
+
+app.delete('/api/conversations/:id/share/:userId', requireAuth, async (req, res) => {
+  const ok = await store.unshareConversation(req.session.userId, req.params.id, req.params.userId);
+  if (!ok) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  res.json({ ok: true });
+});
+
+app.get('/api/shared-with-me', requireAuth, async (req, res) => {
+  res.json(await store.listSharedWithMe(req.session.userId));
+});
+
+// ---- 프롬프트 템플릿 ----
+
+app.get('/api/templates', requireAuth, async (req, res) => {
+  res.json(await store.listPromptTemplates());
+});
+
+app.post('/api/admin/templates', requireAuth, requireAdmin, async (req, res) => {
+  const { title, content } = req.body || {};
+  if (!title?.trim() || !content?.trim()) {
+    return res.status(400).json({ error: 'title과 content가 필요합니다.' });
+  }
+  const template = await store.createPromptTemplate(req.session.userId, title.trim().slice(0, 100), content.trim().slice(0, 4000));
+  res.json(template);
+});
+
+app.delete('/api/admin/templates/:id', requireAuth, requireAdmin, async (req, res) => {
+  const ok = await store.deletePromptTemplate(req.params.id);
+  if (!ok) return res.status(404).json({ error: '템플릿을 찾을 수 없습니다.' });
+  res.json({ ok: true });
+});
+
+// ---- 본인 사용량 ----
+
+app.get('/api/usage/me', requireAuth, async (req, res) => {
+  res.json(await store.getMyUsage(req.session.userId));
 });
 
 app.delete('/api/conversations/:id', requireAuth, async (req, res) => {
@@ -813,6 +956,62 @@ function toGeminiContents(turns) {
     }
     return { role: t.role, parts };
   });
+}
+
+// 기본 시스템 프롬프트 + 프로젝트별 페르소나/커스텀 지침 + 현재 시각(검색 결과의 날짜 판단에 필요) +
+// (연결된 경우) 캘린더 도구 안내를 합쳐 최종 시스템 프롬프트를 만든다.
+function buildFullSystemPrompt(settings, conversation, toolConfig) {
+  let prompt = buildSystemPrompt(settings.pushbackIntensity, settings.memory);
+  if (conversation.persona && PERSONA_PROMPTS[conversation.persona]) {
+    prompt += `\n\n${PERSONA_PROMPTS[conversation.persona]}`;
+  }
+  if (conversation.instructions && conversation.instructions.trim()) {
+    prompt += `\n\n## 이 프로젝트만의 지침\n${conversation.instructions.trim()}`;
+  }
+  const timeContext = `현재 시각: ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} (한국 표준시)`;
+  prompt += `\n\n${timeContext}\n필요하면 구글 검색 도구로 최신 정보를 확인한 뒤 답하세요.`;
+  if (toolConfig?.execute) {
+    prompt += '\n캘린더 도구를 쓸 수 있습니다. 일정 추가/조회 요청이면 반드시 도구를 사용하세요.';
+  }
+  return prompt;
+}
+
+// 프로젝트에 등록된 지식 베이스 파일들을 대화 맨 앞에 (참고자료 제시 → 확인 응답) 형태의
+// 합성 턴 한 쌍으로 끼워 넣는다. 매 요청마다 다시 전송되므로 토큰 비용이 들지만, Gemini에는
+// 요청 간 지속되는 서버 측 컨텍스트가 없어 이 방식이 가장 단순하고 확실하다.
+async function buildKnowledgeContents(conversationId) {
+  const files = await store.listKnowledgeFiles(conversationId);
+  if (!files.length) return [];
+  const parts = [{ text: '다음은 이 프로젝트의 참고 자료입니다. 답변할 때 항상 참고하세요.' }];
+  for (const f of files) {
+    parts.push({ inlineData: { data: f.data, mimeType: f.mimeType } });
+  }
+  return [
+    { role: 'user', parts },
+    { role: 'model', parts: [{ text: '참고 자료를 확인했습니다.' }] },
+  ];
+}
+
+// Gemini 멀티모달이 직접 이해하지 못하는 오피스 문서(xlsx/docx)를 서버에서 텍스트로 뽑아
+// mimeType: text/plain 첨부로 바꿔치기한다. 이미지/PDF는 그대로 둔다.
+async function extractOfficeAttachments(attachments) {
+  if (!Array.isArray(attachments) || !attachments.length) return attachments;
+  const result = [];
+  for (const a of attachments) {
+    if (a.mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || a.mimeType === 'text/csv') {
+      const buf = Buffer.from(a.data, 'base64');
+      const wb = XLSX.read(buf, { type: 'buffer' });
+      const text = wb.SheetNames.map((name) => `[시트: ${name}]\n${XLSX.utils.sheet_to_csv(wb.Sheets[name])}`).join('\n\n');
+      result.push({ mimeType: 'text/plain', data: Buffer.from(text, 'utf-8').toString('base64'), name: a.name });
+    } else if (a.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      const buf = Buffer.from(a.data, 'base64');
+      const { value } = await mammoth.extractRawText({ buffer: buf });
+      result.push({ mimeType: 'text/plain', data: Buffer.from(value, 'utf-8').toString('base64'), name: a.name });
+    } else {
+      result.push(a);
+    }
+  }
+  return result;
 }
 
 // Gemini는 잘못된 키를 401이 아니라 400(INVALID_ARGUMENT)으로 반환하고,
@@ -956,10 +1155,10 @@ async function extractMemoryInBackground(userId, userMessage, modelReply, curren
 }
 
 app.post('/api/chat', requireAuth, async (req, res) => {
-  const { conversationId, attachments } = req.body || {};
+  const { conversationId, attachments: rawAttachments } = req.body || {};
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
-  const attachmentError = validateAttachments(attachments);
-  if (!conversationId || (!message && !attachments?.length)) {
+  const attachmentError = validateAttachments(rawAttachments);
+  if (!conversationId || (!message && !rawAttachments?.length)) {
     return res.status(400).json({ error: 'conversationId와 message 또는 attachments가 필요합니다.' });
   }
   if (attachmentError) {
@@ -969,6 +1168,8 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   if (!conversation) {
     return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
   }
+  // 저장은 원본 첨부(엑셀/워드 원본 등)로 하고, Gemini에 보낼 때만 추출된 텍스트로 바꾼다.
+  const attachments = await extractOfficeAttachments(rawAttachments);
 
   const settings = await store.getSettings(req.session.userId);
   const mode = resolveMode(settings.performanceMode, {
@@ -977,12 +1178,13 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     turnCount: conversation.turns.length,
   });
   const user = await store.findUserById(req.session.userId);
-  const toolConfig = buildCalendarToolConfig(user);
-  const timeContext = `\n\n현재 시각: ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} (한국 표준시)`;
-  const systemPrompt =
-    buildSystemPrompt(settings.pushbackIntensity, settings.memory) +
-    (toolConfig ? timeContext + '\n캘린더 도구를 쓸 수 있습니다. 일정 추가/조회 요청이면 반드시 도구를 사용하세요.' : '');
-  const contents = toGeminiContents(compactHistory([...conversation.turns, { role: 'user', content: message, attachments }]));
+  const toolConfig = buildToolConfig(user);
+  const systemPrompt = buildFullSystemPrompt(settings, conversation, toolConfig);
+  const knowledgeContents = await buildKnowledgeContents(conversationId);
+  const contents = [
+    ...knowledgeContents,
+    ...toGeminiContents(compactHistory([...conversation.turns, { role: 'user', content: message, attachments }])),
+  ];
 
   await streamAndRespond(
     req,
@@ -991,7 +1193,7 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     systemPrompt,
     mode,
     async (fullText, totalTokens) => {
-      await store.appendTurn(req.session.userId, conversationId, 'user', message, attachments);
+      await store.appendTurn(req.session.userId, conversationId, 'user', message, rawAttachments);
       await store.appendTurn(req.session.userId, conversationId, 'model', fullText, undefined, totalTokens);
       if (settings.autoMemory) extractMemoryInBackground(req.session.userId, message, fullText, settings.memory);
     },
@@ -999,30 +1201,40 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   );
 });
 
-// 마지막 응답을 지우고 그 직전 사용자 메시지로 새 응답만 다시 받는다.
+// 마지막 응답을 다시 받는다. 마지막 턴이 이미 모델 응답이면(같은 자리를 다시 재생성) 기존 응답을
+// 지우지 않고 브랜치로 보관한 뒤 새 응답을 같은 자리의 대안으로 추가한다(대화 브랜칭).
+// 마지막 턴이 사용자 메시지면(먼저 /rewind로 지운 뒤 호출하는 이전 방식) 예전처럼 새 응답만 추가한다.
 app.post('/api/chat/regenerate', requireAuth, async (req, res) => {
   const { conversationId } = req.body || {};
   if (!conversationId) return res.status(400).json({ error: 'conversationId가 필요합니다.' });
   const conversation = await store.getConversation(req.session.userId, conversationId);
   if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+
   const lastTurn = conversation.turns[conversation.turns.length - 1];
-  if (!lastTurn || lastTurn.role !== 'user') {
+  let branchGroup = null;
+  let promptTurn = lastTurn;
+  if (lastTurn && lastTurn.role === 'model') {
+    const archived = await store.archiveLastModelTurn(req.session.userId, conversationId);
+    if (!archived) return res.status(400).json({ error: '재생성할 응답이 없습니다.' });
+    branchGroup = archived.branchGroup;
+    promptTurn = conversation.turns[conversation.turns.length - 2];
+  } else if (!lastTurn || lastTurn.role !== 'user') {
     return res.status(400).json({ error: '재생성할 응답이 없습니다.' });
   }
 
   const settings = await store.getSettings(req.session.userId);
   const mode = resolveMode(settings.performanceMode, {
-    textLength: lastTurn.content?.length || 0,
-    hasAttachments: !!lastTurn.attachments?.length,
+    textLength: promptTurn?.content?.length || 0,
+    hasAttachments: !!promptTurn?.attachments?.length,
     turnCount: conversation.turns.length,
   });
   const user = await store.findUserById(req.session.userId);
-  const toolConfig = buildCalendarToolConfig(user);
-  const timeContext = `\n\n현재 시각: ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} (한국 표준시)`;
-  const systemPrompt =
-    buildSystemPrompt(settings.pushbackIntensity, settings.memory) +
-    (toolConfig ? timeContext + '\n캘린더 도구를 쓸 수 있습니다. 일정 추가/조회 요청이면 반드시 도구를 사용하세요.' : '');
-  const contents = toGeminiContents(compactHistory(conversation.turns));
+  const toolConfig = buildToolConfig(user);
+  const systemPrompt = buildFullSystemPrompt(settings, conversation, toolConfig);
+  const knowledgeContents = await buildKnowledgeContents(conversationId);
+  // 방금 브랜치로 보관 처리한 이전 모델 답변은 다시 보내는 히스토리에서 제외한다.
+  const historyTurns = branchGroup ? conversation.turns.slice(0, -1) : conversation.turns;
+  const contents = [...knowledgeContents, ...toGeminiContents(compactHistory(historyTurns))];
 
   await streamAndRespond(
     req,
@@ -1031,10 +1243,29 @@ app.post('/api/chat/regenerate', requireAuth, async (req, res) => {
     systemPrompt,
     mode,
     async (fullText, totalTokens) => {
-      await store.appendTurn(req.session.userId, conversationId, 'model', fullText, undefined, totalTokens);
+      if (branchGroup) {
+        await store.addBranchTurn(conversationId, 'model', fullText, undefined, totalTokens, branchGroup);
+      } else {
+        await store.appendTurn(req.session.userId, conversationId, 'model', fullText, undefined, totalTokens);
+      }
     },
     toolConfig
   );
+});
+
+// 특정 자리(branchGroup)에 쌓인 대안 응답들을 조회/전환한다.
+app.get('/api/conversations/:id/branches/:branchGroup', requireAuth, async (req, res) => {
+  const branches = await store.getBranches(req.session.userId, req.params.id, req.params.branchGroup);
+  if (branches === null) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  res.json(branches);
+});
+
+app.post('/api/conversations/:id/branches/:branchGroup/activate', requireAuth, async (req, res) => {
+  const { turnId } = req.body || {};
+  if (!turnId) return res.status(400).json({ error: 'turnId가 필요합니다.' });
+  const ok = await store.activateBranch(req.session.userId, req.params.id, req.params.branchGroup, turnId);
+  if (!ok) return res.status(404).json({ error: '브랜치를 찾을 수 없습니다.' });
+  res.json({ ok: true });
 });
 
 // 5분마다 캘린더를 연결하고 알림도 구독한 유저들의 15~20분 뒤 일정을 확인해 푸시를 보낸다.

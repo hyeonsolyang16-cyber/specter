@@ -15,7 +15,9 @@
     "express": "^4.21.1",
     "express-rate-limit": "^8.6.2",
     "express-session": "^1.19.0",
+    "mammoth": "^1.12.1",
     "pg": "^8.23.0",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
 }

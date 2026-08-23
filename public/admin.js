@@ -79,6 +79,69 @@ function renderUsageTable(usage) {
   return section;
 }
 
+function renderTemplates(templates) {
+  const section = el('section', 'admin-user');
+  const header = el('div', 'admin-user-header');
+  header.appendChild(el('strong', null, '프롬프트 템플릿 관리'));
+  header.appendChild(el('span', null, '모든 사용자가 입력창에서 바로 불러올 수 있는 공용 템플릿입니다'));
+  section.appendChild(header);
+
+  const form = document.createElement('form');
+  form.className = 'settings-form';
+  const titleInput = document.createElement('input');
+  titleInput.type = 'text';
+  titleInput.placeholder = '템플릿 제목';
+  titleInput.maxLength = 100;
+  titleInput.required = true;
+  const contentInput = document.createElement('textarea');
+  contentInput.placeholder = '템플릿 내용 (입력창에 그대로 채워집니다)';
+  contentInput.rows = 3;
+  contentInput.maxLength = 4000;
+  contentInput.required = true;
+  const submitBtn = document.createElement('button');
+  submitBtn.type = 'submit';
+  submitBtn.textContent = '템플릿 추가';
+  form.appendChild(titleInput);
+  form.appendChild(contentInput);
+  form.appendChild(submitBtn);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const res = await fetch('/api/admin/templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: titleInput.value, content: contentInput.value }),
+    });
+    if (res.ok) load();
+  });
+  section.appendChild(form);
+
+  if (templates.length === 0) {
+    section.appendChild(el('p', 'admin-empty', '아직 등록된 템플릿이 없습니다.'));
+    return section;
+  }
+
+  const list = el('div', 'admin-turns');
+  for (const t of templates) {
+    const item = el('div', 'admin-turn model');
+    item.appendChild(el('span', 'admin-turn-meta', t.title));
+    item.appendChild(el('div', 'admin-turn-body', t.content));
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'project-category-edit';
+    delBtn.textContent = '✕';
+    delBtn.title = '삭제';
+    delBtn.addEventListener('click', async () => {
+      if (!confirm(`"${t.title}" 템플릿을 삭제할까요?`)) return;
+      await fetch(`/api/admin/templates/${t.id}`, { method: 'DELETE' });
+      load();
+    });
+    item.appendChild(delBtn);
+    list.appendChild(item);
+  }
+  section.appendChild(list);
+  return section;
+}
+
 function renderAlerts(alerts) {
   if (alerts.length === 0) return null;
   const section = el('section', 'admin-user admin-alerts');
@@ -98,11 +161,12 @@ function renderAlerts(alerts) {
 }
 
 async function load() {
-  const [convRes, usageRes, alertsRes, trendRes] = await Promise.all([
+  const [convRes, usageRes, alertsRes, trendRes, templatesRes] = await Promise.all([
     fetch('/api/admin/conversations'),
     fetch('/api/admin/usage'),
     fetch('/api/admin/alerts'),
     fetch('/api/admin/usage-trend'),
+    fetch('/api/templates'),
   ]);
   if (convRes.status === 401) return (location.href = '/login.html');
   if (convRes.status === 403) return (location.href = '/');
@@ -110,10 +174,12 @@ async function load() {
   const usage = usageRes.ok ? await usageRes.json() : [];
   const alerts = alertsRes.ok ? await alertsRes.json() : [];
   const trend = trendRes.ok ? await trendRes.json() : [];
+  const templates = templatesRes.ok ? await templatesRes.json() : [];
 
   content.innerHTML = '';
   const alertsSection = renderAlerts(alerts);
   if (alertsSection) content.appendChild(alertsSection);
+  content.appendChild(renderTemplates(templates));
   content.appendChild(renderUsageTrend(trend));
   content.appendChild(renderUsageTable(usage));
 

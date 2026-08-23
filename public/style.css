@@ -954,4 +954,179 @@ html, body {
 .msg.long-press-active .speak-btn {
   opacity: 1 !important;
 }
+
+/* ---- 사용량 표시 ---- */
+.usage-display { font-size: 11px; color: var(--text-muted); padding: 0 6px; }
+
+/* ---- 채팅 헤더(프로젝트명 + 설정/공유) ---- */
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.chat-header-title { font-size: 14px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-header-readonly {
+  font-size: 11.5px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  padding: 4px 9px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+.chat-header-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.chat-header-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; }
+.chat-header-btn:hover { color: var(--text); border-color: var(--accent); }
+
+/* ---- 프로젝트 설정 모달 ---- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 16px;
+}
+.modal-panel {
+  background: var(--surface);
+  border-radius: 14px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header h2 { font-size: 15px; margin: 0; }
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.modal-close:hover { color: var(--text); }
+.modal-body { padding: 18px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 22px; }
+.modal-section h3 { font-size: 13px; margin: 0 0 8px; }
+.modal-section select,
+.modal-section textarea,
+.modal-section input[type="email"] {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+.modal-section select:focus,
+.modal-section textarea:focus,
+.modal-section input[type="email"]:focus { outline: none; border-color: var(--accent); }
+.modal-section .reset-btn { margin-top: 8px; }
+
+.knowledge-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.knowledge-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+.knowledge-file-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.knowledge-file-row button { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 13px; }
+.knowledge-file-row button:hover { color: var(--danger); }
+
+.share-row { display: flex; gap: 8px; }
+.share-row input { flex: 1; }
+.share-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.share-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+.share-list-row span { flex: 1; }
+.share-list-row button { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 13px; }
+.share-list-row button:hover { color: var(--danger); }
+
+/* ---- 프롬프트 템플릿 메뉴 ---- */
+.template-menu {
+  position: fixed;
+  z-index: 60;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.2);
+  max-width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+}
+.template-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.template-menu-item:hover { background: var(--accent-soft); }
+.template-menu-empty { padding: 10px; font-size: 12px; color: var(--text-muted); }
+
+/* ---- 대화 브랜치 네비게이터 ---- */
+.branch-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+.branch-nav button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.branch-nav button:hover:not(:disabled) { color: var(--text); }
+.branch-nav button:disabled { opacity: 0.3; cursor: default; }
 .msg.long-press-active { background: var(--accent-soft); }

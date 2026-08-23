@@ -34,4 +34,17 @@ function buildSystemPrompt(pushbackIntensity, memory) {
   return prompt;
 }
 
-module.exports = { buildSystemPrompt };
+const PERSONA_PROMPTS = {
+  finance: '## 역할 (재무 검토 모드)\n지금은 재무/예산 검토 역할입니다. 숫자의 근거와 계산, 현금흐름 영향, 비용 대비 효과, 재무적 리스크를 최우선으로 짚으세요.',
+  legal: '## 역할 (법률 검토 모드)\n지금은 법률/컴플라이언스 검토 역할입니다. 법적 리스크, 계약 조항의 허점, 규정 위반 가능성을 최우선으로 짚으세요. 단, 법적 조언이 아니라 검토 관점의 의견임을 필요시 명시하세요.',
+  marketing: '## 역할 (마케팅 검토 모드)\n지금은 마케팅 전략 검토 역할입니다. 타겟 고객 적합성, 메시지의 설득력, 경쟁사 대비 차별점, 실행 가능성을 최우선으로 짚으세요.',
+};
+
+const PERSONA_LABELS = {
+  general: '일반',
+  finance: '재무 검토',
+  legal: '법률 검토',
+  marketing: '마케팅 검토',
+};
+
+module.exports = { buildSystemPrompt, PERSONA_PROMPTS, PERSONA_LABELS };

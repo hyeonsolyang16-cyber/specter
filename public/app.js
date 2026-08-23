@@ -20,6 +20,28 @@ const micBtn = document.getElementById('mic-btn');
 const modeSelect = document.getElementById('mode-select');
 const trashToggleBtn = document.getElementById('trash-toggle-btn');
 const exportBtn = document.getElementById('export-btn');
+const usageDisplay = document.getElementById('usage-display');
+const sharedToggleBtn = document.getElementById('shared-toggle-btn');
+const chatHeaderTitle = document.getElementById('chat-header-title');
+const chatHeaderReadonly = document.getElementById('chat-header-readonly');
+const projectSettingsBtn = document.getElementById('project-settings-btn');
+const projectModal = document.getElementById('project-modal');
+const projectModalClose = document.getElementById('project-modal-close');
+const personaSelect = document.getElementById('persona-select');
+const instructionsInput = document.getElementById('instructions-input');
+const instructionsSaveBtn = document.getElementById('instructions-save-btn');
+const instructionsSuccess = document.getElementById('instructions-success');
+const knowledgeList = document.getElementById('knowledge-list');
+const knowledgeFileInput = document.getElementById('knowledge-file-input');
+const knowledgeUploadBtn = document.getElementById('knowledge-upload-btn');
+const shareEmailInput = document.getElementById('share-email-input');
+const shareBtn = document.getElementById('share-btn');
+const shareList = document.getElementById('share-list');
+const templateBtn = document.getElementById('template-btn');
+const templateMenu = document.getElementById('template-menu');
+
+let isReadOnlyConversation = false;
+let personaOptionsCache = null;
 
 exportBtn.addEventListener('click', async () => {
   if (!currentConversationId) return;
@@ -44,15 +66,60 @@ exportBtn.addEventListener('click', async () => {
   URL.revokeObjectURL(url);
 });
 let showingTrash = false;
+let showingShared = false;
+
+async function refreshSidebarList() {
+  if (showingTrash) return renderTrash();
+  if (showingShared) return renderSharedList();
+  return renderProjectList();
+}
 
 trashToggleBtn.addEventListener('click', async () => {
   showingTrash = !showingTrash;
+  showingShared = false;
+  sharedToggleBtn.textContent = '공유받음';
   trashToggleBtn.textContent = showingTrash ? '목록으로' : '휴지통';
   newProjectBtn.hidden = showingTrash;
   searchInput.hidden = showingTrash;
-  if (showingTrash) await renderTrash();
-  else await renderProjectList();
+  await refreshSidebarList();
 });
+
+sharedToggleBtn.addEventListener('click', async () => {
+  showingShared = !showingShared;
+  showingTrash = false;
+  trashToggleBtn.textContent = '휴지통';
+  sharedToggleBtn.textContent = showingShared ? '목록으로' : '공유받음';
+  newProjectBtn.hidden = showingShared;
+  searchInput.hidden = showingShared;
+  await refreshSidebarList();
+});
+
+async function renderSharedList() {
+  const res = await fetch('/api/shared-with-me');
+  if (res.status === 401) return (location.href = '/login.html');
+  const items = await res.json();
+  projectList.innerHTML = '';
+  if (items.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'project-category';
+    empty.textContent = '아직 공유받은 프로젝트가 없습니다.';
+    projectList.appendChild(empty);
+    return;
+  }
+  for (const c of items) {
+    const row = document.createElement('div');
+    row.className = 'project-row';
+    const item = document.createElement('button');
+    item.className = `project-item${c.id === currentConversationId ? ' active' : ''}`;
+    item.textContent = `${c.title} (${c.ownerEmail})`;
+    item.addEventListener('click', () => {
+      openConversation(c.id);
+      closeSidebar();
+    });
+    row.appendChild(item);
+    projectList.appendChild(row);
+  }
+}
 
 async function renderTrash() {
   const res = await fetch('/api/trash');
@@ -208,6 +275,12 @@ async function performSearch() {
 
 attachBtn.addEventListener('click', () => fileInput.click());
 
+const OFFICE_MIME_TYPES = [
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/csv',
+];
+
 fileInput.addEventListener('change', async () => {
   const files = Array.from(fileInput.files || []);
   for (const file of files) {
@@ -215,10 +288,12 @@ fileInput.addEventListener('change', async () => {
       alert(`첨부파일은 최대 ${MAX_ATTACHMENTS}개까지 가능합니다.`);
       break;
     }
-    const isImage = file.type.startsWith('image/');
-    const isPdf = file.type === 'application/pdf';
-    if (!isImage && !isPdf) {
-      alert(`${file.name}은(는) 지원하지 않는 형식입니다. 이미지 또는 PDF만 첨부할 수 있습니다.`);
+    const mimeType = resolveFileMimeType(file);
+    const isImage = mimeType.startsWith('image/');
+    const isPdf = mimeType === 'application/pdf';
+    const isOffice = OFFICE_MIME_TYPES.includes(mimeType);
+    if (!isImage && !isPdf && !isOffice) {
+      alert(`${file.name}은(는) 지원하지 않는 형식입니다. 이미지, PDF, Excel, Word, CSV만 첨부할 수 있습니다.`);
       continue;
     }
     if (file.size > MAX_ATTACHMENT_BYTES) {
@@ -234,7 +309,7 @@ fileInput.addEventListener('change', async () => {
     const match = /^data:(.+?);base64,(.+)$/.exec(dataUrl);
     if (!match) continue;
     pendingAttachments.push({
-      mimeType: match[1],
+      mimeType,
       data: match[2],
       name: file.name,
       previewUrl: isImage ? dataUrl : null,
@@ -414,7 +489,7 @@ function addMessage(role, text, opts = {}) {
     }
   }
 
-  if (role === 'user' && !opts.error) {
+  if (role === 'user' && !opts.error && !opts.readOnly) {
     const editBtn = document.createElement('button');
     editBtn.className = 'edit-btn';
     editBtn.title = '수정';
@@ -423,7 +498,7 @@ function addMessage(role, text, opts = {}) {
     el.appendChild(editBtn);
   }
   if (role === 'specter' && !opts.error) {
-    decorateSpecterMessage(el, body);
+    decorateSpecterMessage(el, body, opts.readOnly);
   }
   chat.appendChild(el);
   chat.scrollTop = chat.scrollHeight;
@@ -442,8 +517,8 @@ function addTierBadge(el, tier) {
   else el.insertBefore(badge, el.firstChild);
 }
 
-function decorateSpecterMessage(el, body) {
-  if (!el.querySelector('.regen-btn')) {
+function decorateSpecterMessage(el, body, readOnly) {
+  if (!readOnly && !el.querySelector('.regen-btn')) {
     const regenBtn = document.createElement('button');
     regenBtn.className = 'regen-btn';
     regenBtn.title = '다시 생성';
@@ -756,10 +831,17 @@ async function editMessage(msgEl, text) {
   input.focus();
 }
 
+// 대화의 마지막 응답을 재생성할 때는 기존 답변을 지우지 않고 브랜치(대안)로 보관한다(서버가 자동 판단).
+// 마지막이 아닌 중간 메시지를 재생성할 때는 예전처럼 그 이후를 모두 지우고 새로 받는다.
 async function regenerateFrom(msgEl) {
   if (!currentConversationId || sendBtn.type === 'button') return;
-  const idx = await rewindTo(msgEl);
-  if (idx === -1) return;
+  const allMsgs = Array.from(chat.querySelectorAll('.msg:not(.error)'));
+  const isLast = allMsgs[allMsgs.length - 1] === msgEl;
+
+  if (!isLast) {
+    const idx = await rewindTo(msgEl);
+    if (idx === -1) return;
+  }
 
   setGenerating(true);
   const pending = addPendingMessage();
@@ -779,7 +861,66 @@ async function regenerateFrom(msgEl) {
     setGenerating(false);
     return;
   }
+  if (isLast) msgEl.remove();
   await handleChatResponse(res, pending, '');
+  if (isLast) attachLatestBranchNav(pending);
+}
+
+// 재생성 직후 마지막 턴에 브랜치가 생겼는지 서버에서 다시 확인해 네비게이터를 붙인다.
+async function attachLatestBranchNav(msgEl) {
+  const res = await fetch(`/api/conversations/${currentConversationId}`);
+  if (!res.ok) return;
+  const conversation = await res.json();
+  const lastTurn = conversation.turns[conversation.turns.length - 1];
+  if (lastTurn?.branchGroup) buildBranchNav(msgEl, lastTurn.branchGroup);
+}
+
+async function buildBranchNav(msgEl, branchGroup) {
+  const res = await fetch(`/api/conversations/${currentConversationId}/branches/${branchGroup}`);
+  if (!res.ok) return;
+  const branches = await res.json();
+  if (branches.length <= 1) return;
+  renderBranchNav(msgEl, branchGroup, branches);
+}
+
+function renderBranchNav(msgEl, branchGroup, branches) {
+  let nav = msgEl.querySelector('.branch-nav');
+  if (!nav) {
+    nav = document.createElement('span');
+    nav.className = 'branch-nav';
+    msgEl.appendChild(nav);
+  }
+  const idx = branches.findIndex((b) => b.isActive);
+  nav.innerHTML = '';
+  const prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.textContent = '‹';
+  prevBtn.disabled = idx <= 0;
+  prevBtn.addEventListener('click', () => switchBranch(msgEl, branchGroup, branches, idx - 1));
+  const label = document.createElement('span');
+  label.textContent = `${idx + 1}/${branches.length}`;
+  const nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.textContent = '›';
+  nextBtn.disabled = idx >= branches.length - 1;
+  nextBtn.addEventListener('click', () => switchBranch(msgEl, branchGroup, branches, idx + 1));
+  nav.appendChild(prevBtn);
+  nav.appendChild(label);
+  nav.appendChild(nextBtn);
+}
+
+async function switchBranch(msgEl, branchGroup, branches, newIdx) {
+  const target = branches[newIdx];
+  if (!target || isReadOnlyConversation) return;
+  await fetch(`/api/conversations/${currentConversationId}/branches/${branchGroup}/activate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ turnId: target.id }),
+  });
+  const body = msgEl.querySelector('.msg-body');
+  body.textContent = target.content;
+  const updated = branches.map((b, i) => ({ ...b, isActive: i === newIdx }));
+  renderBranchNav(msgEl, branchGroup, updated);
 }
 
 async function handleChatResponse(res, pending, restoreText) {
@@ -822,7 +963,8 @@ async function handleChatResponse(res, pending, restoreText) {
   activeAbortController = null;
   setGenerating(false);
   input.focus();
-  renderProjectList(); // 첫 메시지 이후 제목이 바뀌므로 목록 갱신
+  refreshSidebarList(); // 첫 메시지 이후 제목이 바뀌므로 목록 갱신
+  loadUsage();
 }
 
 async function openConversation(id) {
@@ -830,17 +972,263 @@ async function openConversation(id) {
   chat.innerHTML = '';
   const res = await fetch(`/api/conversations/${id}`);
   if (res.status === 401) return (location.href = '/login.html');
+  if (!res.ok) return;
   const conversation = await res.json();
+  isReadOnlyConversation = !!conversation.readOnly;
+  chatHeaderTitle.textContent = conversation.title;
+  chatHeaderReadonly.hidden = !isReadOnlyConversation;
+  projectSettingsBtn.hidden = isReadOnlyConversation;
   if (conversation.turns.length === 0) {
     renderEmptyState();
   } else {
     for (const t of conversation.turns) {
-      addMessage(t.role === 'user' ? 'user' : 'specter', t.content, { attachments: t.attachments || [] });
+      const msgEl = addMessage(t.role === 'user' ? 'user' : 'specter', t.content, {
+        attachments: t.attachments || [],
+        readOnly: isReadOnlyConversation,
+      });
+      if (t.role !== 'user' && t.branchGroup) buildBranchNav(msgEl, t.branchGroup);
     }
   }
-  setComposerDisabled(false);
-  renderProjectList();
-  input.focus();
+  setComposerDisabled(isReadOnlyConversation);
+  refreshSidebarList();
+  if (!isReadOnlyConversation) input.focus();
+}
+
+// ---- 프로젝트 설정 모달(역할/지침/참고자료/공유) ----
+
+async function loadPersonaOptions() {
+  if (personaOptionsCache) return personaOptionsCache;
+  const res = await fetch('/api/personas');
+  personaOptionsCache = res.ok ? await res.json() : [];
+  return personaOptionsCache;
+}
+
+async function openProjectModal() {
+  if (!currentConversationId || isReadOnlyConversation) return;
+  const [personas, convRes] = await Promise.all([
+    loadPersonaOptions(),
+    fetch(`/api/conversations/${currentConversationId}`),
+  ]);
+  const conversation = convRes.ok ? await convRes.json() : null;
+  personaSelect.innerHTML = '';
+  for (const p of personas) {
+    const opt = document.createElement('option');
+    opt.value = p.value;
+    opt.textContent = p.label;
+    personaSelect.appendChild(opt);
+  }
+  personaSelect.value = conversation?.persona || 'general';
+  instructionsInput.value = conversation?.instructions || '';
+  instructionsSuccess.textContent = '';
+  await renderKnowledgeList();
+  await renderShareList();
+  projectModal.hidden = false;
+}
+
+function closeProjectModal() {
+  projectModal.hidden = true;
+}
+
+projectSettingsBtn.addEventListener('click', openProjectModal);
+projectModalClose.addEventListener('click', closeProjectModal);
+projectModal.addEventListener('click', (e) => {
+  if (e.target === projectModal) closeProjectModal();
+});
+
+personaSelect.addEventListener('change', async () => {
+  if (!currentConversationId) return;
+  await fetch(`/api/conversations/${currentConversationId}/persona`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ persona: personaSelect.value }),
+  });
+});
+
+instructionsSaveBtn.addEventListener('click', async () => {
+  if (!currentConversationId) return;
+  await fetch(`/api/conversations/${currentConversationId}/instructions`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ instructions: instructionsInput.value }),
+  });
+  instructionsSuccess.textContent = '저장되었습니다.';
+  setTimeout(() => (instructionsSuccess.textContent = ''), 2000);
+});
+
+async function renderKnowledgeList() {
+  const res = await fetch(`/api/conversations/${currentConversationId}/knowledge`);
+  const files = res.ok ? await res.json() : [];
+  knowledgeList.innerHTML = '';
+  if (files.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'settings-desc';
+    empty.textContent = '아직 등록된 참고 자료가 없습니다.';
+    knowledgeList.appendChild(empty);
+    return;
+  }
+  for (const f of files) {
+    const row = document.createElement('div');
+    row.className = 'knowledge-file-row';
+    const label = document.createElement('span');
+    label.textContent = `📎 ${f.name}`;
+    row.appendChild(label);
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.textContent = '✕';
+    delBtn.title = '삭제';
+    delBtn.addEventListener('click', async () => {
+      await fetch(`/api/conversations/${currentConversationId}/knowledge/${f.id}`, { method: 'DELETE' });
+      renderKnowledgeList();
+    });
+    row.appendChild(delBtn);
+    knowledgeList.appendChild(row);
+  }
+}
+
+const KNOWLEDGE_MAX_BYTES = 15 * 1024 * 1024;
+const KNOWLEDGE_MIME_TYPES = [
+  'application/pdf',
+  'text/plain',
+  'text/csv',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+];
+knowledgeUploadBtn.addEventListener('click', () => knowledgeFileInput.click());
+knowledgeFileInput.addEventListener('change', async () => {
+  const file = knowledgeFileInput.files?.[0];
+  knowledgeFileInput.value = '';
+  if (!file) return;
+  const mimeType = resolveFileMimeType(file);
+  if (!KNOWLEDGE_MIME_TYPES.includes(mimeType)) {
+    alert('PDF, 텍스트, Excel(.xlsx), Word(.docx), CSV 파일만 등록할 수 있습니다.');
+    return;
+  }
+  if (file.size > KNOWLEDGE_MAX_BYTES) {
+    alert('파일은 15MB 이하만 가능합니다.');
+    return;
+  }
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+  const match = /^data:(.+?);base64,(.+)$/.exec(dataUrl);
+  if (!match) return;
+  const res = await fetch(`/api/conversations/${currentConversationId}/knowledge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: file.name, mimeType, data: match[2] }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    alert(data.error || '업로드에 실패했습니다.');
+    return;
+  }
+  renderKnowledgeList();
+});
+
+async function renderShareList() {
+  const res = await fetch(`/api/conversations/${currentConversationId}/shares`);
+  const shares = res.ok ? await res.json() : [];
+  shareList.innerHTML = '';
+  for (const s of shares) {
+    const row = document.createElement('div');
+    row.className = 'share-list-row';
+    const label = document.createElement('span');
+    label.textContent = s.email;
+    row.appendChild(label);
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.textContent = '✕';
+    removeBtn.title = '공유 해제';
+    removeBtn.addEventListener('click', async () => {
+      await fetch(`/api/conversations/${currentConversationId}/share/${s.userId}`, { method: 'DELETE' });
+      renderShareList();
+    });
+    row.appendChild(removeBtn);
+    shareList.appendChild(row);
+  }
+}
+
+shareBtn.addEventListener('click', async () => {
+  const email = shareEmailInput.value.trim();
+  if (!email) return;
+  const res = await fetch(`/api/conversations/${currentConversationId}/share`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(data.error || '공유에 실패했습니다.');
+    return;
+  }
+  shareEmailInput.value = '';
+  renderShareList();
+});
+
+// ---- 파일 확장자로 브라우저가 mimeType을 비워 보내는 경우(csv 등) 보정 ----
+function resolveFileMimeType(file) {
+  if (file.type) return file.type;
+  const ext = file.name.split('.').pop()?.toLowerCase();
+  if (ext === 'csv') return 'text/csv';
+  if (ext === 'txt') return 'text/plain';
+  if (ext === 'xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (ext === 'docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  return '';
+}
+
+// ---- 프롬프트 템플릿 ----
+let templatesCache = null;
+templateBtn.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  if (!templateMenu.hidden) {
+    templateMenu.hidden = true;
+    return;
+  }
+  if (!templatesCache) {
+    const res = await fetch('/api/templates');
+    templatesCache = res.ok ? await res.json() : [];
+  }
+  templateMenu.innerHTML = '';
+  if (templatesCache.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'template-menu-empty';
+    empty.textContent = '관리자가 등록한 템플릿이 아직 없습니다.';
+    templateMenu.appendChild(empty);
+  } else {
+    for (const t of templatesCache) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'template-menu-item';
+      btn.textContent = t.title;
+      btn.addEventListener('click', () => {
+        input.value = t.content;
+        input.dispatchEvent(new Event('input'));
+        input.focus();
+        templateMenu.hidden = true;
+      });
+      templateMenu.appendChild(btn);
+    }
+  }
+  const rect = templateBtn.getBoundingClientRect();
+  templateMenu.style.left = `${Math.max(8, rect.left)}px`;
+  templateMenu.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+  templateMenu.hidden = false;
+});
+document.addEventListener('click', (e) => {
+  if (!templateMenu.hidden && !templateMenu.contains(e.target) && e.target !== templateBtn) {
+    templateMenu.hidden = true;
+  }
+});
+
+// ---- 본인 사용량 표시 ----
+async function loadUsage() {
+  const res = await fetch('/api/usage/me');
+  if (!res.ok) return;
+  const usage = await res.json();
+  usageDisplay.textContent = `누적 토큰 사용량: ${usage.totalTokens.toLocaleString('ko-KR')}`;
 }
 
 async function createNewProject() {
@@ -936,6 +1324,7 @@ async function init() {
   } else {
     await openConversation(conversations[0].id);
   }
+  loadUsage();
 }
 
 init();

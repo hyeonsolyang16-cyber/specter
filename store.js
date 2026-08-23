@@ -73,6 +73,36 @@ async function init() {
       expires_at TIMESTAMPTZ NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- 프로젝트별 지식 베이스(항상 참고하는 첨부 자료)
+    CREATE TABLE IF NOT EXISTS knowledge_files (
+      id SERIAL PRIMARY KEY,
+      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      data TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    -- 프로젝트별 커스텀 지침 + 역할(페르소나)
+    ALTER TABLE conversations ADD COLUMN IF NOT EXISTS instructions TEXT;
+    ALTER TABLE conversations ADD COLUMN IF NOT EXISTS persona TEXT;
+    -- 대화 브랜칭: 지우는 대신 비활성 처리해서 재생성/편집 이전 답변도 남겨둔다
+    ALTER TABLE turns ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
+    ALTER TABLE turns ADD COLUMN IF NOT EXISTS branch_group INTEGER;
+    -- 유저 간 대화 공유(읽기 전용)
+    CREATE TABLE IF NOT EXISTS conversation_shares (
+      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      shared_with_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (conversation_id, shared_with_user_id)
+    );
+    -- 관리자가 등록하는 공용 프롬프트 템플릿
+    CREATE TABLE IF NOT EXISTS prompt_templates (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 }
 const ready = init().catch((err) => {
@@ -173,7 +203,34 @@ async function createConversation(userId, category) {
 }
 
 function rowToConversation(row) {
-  return { id: row.id, title: row.title, category: row.category, createdAt: row.created_at, deletedAt: row.deleted_at };
+  return {
+    id: row.id,
+    title: row.title,
+    category: row.category,
+    createdAt: row.created_at,
+    deletedAt: row.deleted_at,
+    instructions: row.instructions,
+    persona: row.persona,
+  };
+}
+
+async function setConversationInstructions(userId, conversationId, instructions) {
+  await ready;
+  const { rows } = await pool.query(
+    'UPDATE conversations SET instructions = $3 WHERE id = $2 AND user_id = $1 RETURNING *',
+    [userId, conversationId, instructions || null]
+  );
+  return rows[0] ? rowToConversation(rows[0]) : null;
+}
+
+async function setConversationPersona(userId, conversationId, persona) {
+  await ready;
+  const { rows } = await pool.query('UPDATE conversations SET persona = $3 WHERE id = $2 AND user_id = $1 RETURNING *', [
+    userId,
+    conversationId,
+    persona || null,
+  ]);
+  return rows[0] ? rowToConversation(rows[0]) : null;
 }
 
 async function listConversations(userId) {
@@ -238,7 +295,24 @@ async function getConversation(userId, conversationId) {
   );
   if (!convRes.rows[0]) return null;
   const turnsRes = await pool.query(
-    'SELECT role, content, attachments, at FROM turns WHERE conversation_id = $1 ORDER BY at ASC',
+    'SELECT id, role, content, attachments, at, branch_group AS "branchGroup" FROM turns WHERE conversation_id = $1 AND is_active = true ORDER BY at ASC',
+    [conversationId]
+  );
+  return { ...rowToConversation(convRes.rows[0]), turns: turnsRes.rows };
+}
+
+// 공유받은 사람은 소유자가 아니어도 읽기 전용으로 볼 수 있다.
+async function getSharedConversation(viewerUserId, conversationId) {
+  await ready;
+  const shareRes = await pool.query(
+    'SELECT 1 FROM conversation_shares WHERE conversation_id = $1 AND shared_with_user_id = $2',
+    [conversationId, viewerUserId]
+  );
+  if (!shareRes.rows[0]) return null;
+  const convRes = await pool.query('SELECT * FROM conversations WHERE id = $1 AND deleted_at IS NULL', [conversationId]);
+  if (!convRes.rows[0]) return null;
+  const turnsRes = await pool.query(
+    'SELECT id, role, content, attachments, at FROM turns WHERE conversation_id = $1 AND is_active = true ORDER BY at ASC',
     [conversationId]
   );
   return { ...rowToConversation(convRes.rows[0]), turns: turnsRes.rows };
@@ -313,6 +387,194 @@ async function appendTurn(userId, conversationId, role, content, attachments, to
     attachments ? JSON.stringify(attachments) : null,
     typeof tokens === 'number' ? tokens : null,
   ]);
+}
+
+// ---- 대화 브랜칭(재생성 시 이전 답변을 지우지 않고 보관) ----
+
+// 마지막 턴이 이미 모델 답변이면(=재생성 요청) 지우지 않고 비활성 처리해 보관한다.
+// 반환된 branchGroup으로 새 답변을 같은 그룹에 묶어 저장한다.
+async function archiveLastModelTurn(userId, conversationId) {
+  await ready;
+  const owns = await pool.query('SELECT id FROM conversations WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL', [
+    conversationId,
+    userId,
+  ]);
+  if (!owns.rows[0]) return null;
+  const activeTurns = await pool.query(
+    'SELECT id, role FROM turns WHERE conversation_id = $1 AND is_active = true ORDER BY at ASC',
+    [conversationId]
+  );
+  const rows = activeTurns.rows;
+  const last = rows[rows.length - 1];
+  if (!last || last.role !== 'model') return null;
+  const anchor = rows[rows.length - 2];
+  const branchGroup = anchor ? anchor.id : last.id;
+  await pool.query('UPDATE turns SET is_active = false, branch_group = $2 WHERE id = $1', [last.id, branchGroup]);
+  return { branchGroup };
+}
+
+async function addBranchTurn(conversationId, role, content, attachments, tokens, branchGroup) {
+  await ready;
+  const { rows } = await pool.query(
+    `INSERT INTO turns (conversation_id, role, content, attachments, tokens, branch_group, is_active)
+     VALUES ($1, $2, $3, $4, $5, $6, true) RETURNING id`,
+    [
+      conversationId,
+      role,
+      content,
+      attachments ? JSON.stringify(attachments) : null,
+      typeof tokens === 'number' ? tokens : null,
+      branchGroup,
+    ]
+  );
+  return rows[0].id;
+}
+
+async function getBranches(userId, conversationId, branchGroup) {
+  await ready;
+  const owns = await pool.query('SELECT id FROM conversations WHERE id = $1 AND user_id = $2', [conversationId, userId]);
+  if (!owns.rows[0]) return null;
+  const { rows } = await pool.query(
+    "SELECT id, content, is_active AS \"isActive\", at FROM turns WHERE conversation_id = $1 AND branch_group = $2 AND role = 'model' ORDER BY at ASC",
+    [conversationId, branchGroup]
+  );
+  return rows;
+}
+
+async function activateBranch(userId, conversationId, branchGroup, turnId) {
+  await ready;
+  const owns = await pool.query('SELECT id FROM conversations WHERE id = $1 AND user_id = $2', [conversationId, userId]);
+  if (!owns.rows[0]) return false;
+  const { rowCount } = await pool.query(
+    "UPDATE turns SET is_active = (id = $3) WHERE conversation_id = $1 AND branch_group = $2 AND role = 'model'",
+    [conversationId, branchGroup, turnId]
+  );
+  return rowCount > 0;
+}
+
+// ---- 프로젝트별 지식 베이스 ----
+
+async function addKnowledgeFile(userId, conversationId, name, mimeType, data) {
+  await ready;
+  const owns = await pool.query('SELECT id FROM conversations WHERE id = $1 AND user_id = $2', [conversationId, userId]);
+  if (!owns.rows[0]) return null;
+  const { rows } = await pool.query(
+    'INSERT INTO knowledge_files (conversation_id, name, mime_type, data) VALUES ($1, $2, $3, $4) RETURNING id, name, mime_type AS "mimeType", created_at AS "createdAt"',
+    [conversationId, name, mimeType, data]
+  );
+  return rows[0];
+}
+
+async function listKnowledgeFiles(conversationId) {
+  await ready;
+  const { rows } = await pool.query(
+    'SELECT id, name, mime_type AS "mimeType", data, created_at AS "createdAt" FROM knowledge_files WHERE conversation_id = $1 ORDER BY created_at ASC',
+    [conversationId]
+  );
+  return rows;
+}
+
+async function deleteKnowledgeFile(userId, conversationId, fileId) {
+  await ready;
+  const owns = await pool.query('SELECT id FROM conversations WHERE id = $1 AND user_id = $2', [conversationId, userId]);
+  if (!owns.rows[0]) return false;
+  const { rowCount } = await pool.query('DELETE FROM knowledge_files WHERE id = $1 AND conversation_id = $2', [
+    fileId,
+    conversationId,
+  ]);
+  return rowCount > 0;
+}
+
+// ---- 유저 간 대화 공유(읽기 전용) ----
+
+async function shareConversation(ownerUserId, conversationId, targetEmail) {
+  await ready;
+  const owns = await pool.query('SELECT id FROM conversations WHERE id = $1 AND user_id = $2', [conversationId, ownerUserId]);
+  if (!owns.rows[0]) return { error: '프로젝트를 찾을 수 없습니다.' };
+  const target = await findUserByEmail(targetEmail);
+  if (!target) return { error: '해당 이메일로 가입된 계정이 없습니다.' };
+  if (target.id === ownerUserId) return { error: '본인에게는 공유할 수 없습니다.' };
+  await pool.query(
+    'INSERT INTO conversation_shares (conversation_id, shared_with_user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+    [conversationId, target.id]
+  );
+  return { ok: true };
+}
+
+async function listSharedWithMe(userId) {
+  await ready;
+  const { rows } = await pool.query(
+    `SELECT c.*, u.email AS owner_email
+     FROM conversation_shares s
+     JOIN conversations c ON c.id = s.conversation_id
+     JOIN users u ON u.id = c.user_id
+     WHERE s.shared_with_user_id = $1 AND c.deleted_at IS NULL
+     ORDER BY s.created_at DESC`,
+    [userId]
+  );
+  return rows.map((r) => ({ ...rowToConversation(r), ownerEmail: r.owner_email }));
+}
+
+async function getConversationShares(ownerUserId, conversationId) {
+  await ready;
+  const owns = await pool.query('SELECT id FROM conversations WHERE id = $1 AND user_id = $2', [conversationId, ownerUserId]);
+  if (!owns.rows[0]) return null;
+  const { rows } = await pool.query(
+    `SELECT u.id AS "userId", u.email
+     FROM conversation_shares s
+     JOIN users u ON u.id = s.shared_with_user_id
+     WHERE s.conversation_id = $1
+     ORDER BY s.created_at ASC`,
+    [conversationId]
+  );
+  return rows;
+}
+
+async function unshareConversation(ownerUserId, conversationId, targetUserId) {
+  await ready;
+  const owns = await pool.query('SELECT id FROM conversations WHERE id = $1 AND user_id = $2', [conversationId, ownerUserId]);
+  if (!owns.rows[0]) return false;
+  await pool.query('DELETE FROM conversation_shares WHERE conversation_id = $1 AND shared_with_user_id = $2', [
+    conversationId,
+    targetUserId,
+  ]);
+  return true;
+}
+
+// ---- 관리자 프롬프트 템플릿 ----
+
+async function listPromptTemplates() {
+  await ready;
+  const { rows } = await pool.query('SELECT id, title, content FROM prompt_templates ORDER BY created_at ASC');
+  return rows;
+}
+
+async function createPromptTemplate(userId, title, content) {
+  await ready;
+  const { rows } = await pool.query(
+    'INSERT INTO prompt_templates (title, content, created_by) VALUES ($1, $2, $3) RETURNING id, title, content',
+    [title, content, userId]
+  );
+  return rows[0];
+}
+
+async function deletePromptTemplate(id) {
+  await ready;
+  const { rowCount } = await pool.query('DELETE FROM prompt_templates WHERE id = $1', [id]);
+  return rowCount > 0;
+}
+
+// ---- 유저 본인 사용량 ----
+
+async function getMyUsage(userId) {
+  await ready;
+  const { rows } = await pool.query(
+    `SELECT COUNT(DISTINCT c.id)::int AS conversation_count, COALESCE(SUM(t.tokens), 0)::bigint AS total_tokens
+     FROM conversations c LEFT JOIN turns t ON t.conversation_id = c.id AND t.role = 'model'
+     WHERE c.user_id = $1 AND c.deleted_at IS NULL`,
+    [userId]
+  );
+  return { conversationCount: rows[0].conversation_count, totalTokens: Number(rows[0].total_tokens) };
 }
 
 // 관리자용 사용량 요약: 유저별 대화 수와 누적 토큰 사용량.
@@ -536,4 +798,22 @@ module.exports = {
   getUsersWithCalendarAndPush,
   wasEventNotified,
   markEventNotified,
+  getSharedConversation,
+  setConversationInstructions,
+  setConversationPersona,
+  archiveLastModelTurn,
+  addBranchTurn,
+  getBranches,
+  activateBranch,
+  addKnowledgeFile,
+  listKnowledgeFiles,
+  deleteKnowledgeFile,
+  shareConversation,
+  listSharedWithMe,
+  getConversationShares,
+  unshareConversation,
+  listPromptTemplates,
+  createPromptTemplate,
+  deletePromptTemplate,
+  getMyUsage,
 };
