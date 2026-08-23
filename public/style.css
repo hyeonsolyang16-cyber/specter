@@ -797,3 +797,9 @@ html, body {
   .composer { padding: 12px 14px 16px; }
   .chat { padding: 16px; }
 }
+
+/* 터치 기기는 :hover가 없어서 위 hover 전용 규칙만으로는 메시지 액션 버튼이 영영 안 보인다.
+   호버를 지원하지 않는 기기에서는 항상 옅게 보이게 한다(맨 아래에 둬서 위 규칙들을 확실히 덮는다). */
+@media (hover: none) {
+  .copy-btn, .regen-btn, .edit-btn, .speak-btn { opacity: 0.55; }
+}
