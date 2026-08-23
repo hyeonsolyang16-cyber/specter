@@ -18,6 +18,50 @@ const attachmentPreview = document.getElementById('attachment-preview');
 const adminLink = document.getElementById('admin-link');
 const micBtn = document.getElementById('mic-btn');
 const modeSelect = document.getElementById('mode-select');
+const plusBtn = document.getElementById('plus-btn');
+const composerExtra = document.getElementById('composer-extra');
+const topbarSearchBtn = document.getElementById('topbar-search-btn');
+
+// 모바일: 첨부/마이크를 "+" 버튼 하나로 묶어서 좁은 화면에서 입력줄이 덜 빡빡하게 한다.
+plusBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  composerExtra.classList.toggle('open');
+});
+composerExtra.addEventListener('click', () => composerExtra.classList.remove('open'));
+document.addEventListener('click', (e) => {
+  if (!composerExtra.contains(e.target) && e.target !== plusBtn) composerExtra.classList.remove('open');
+});
+
+// 모바일 상단바 검색 아이콘: 사이드바를 열면서 바로 검색창에 포커스한다(한 번의 탭으로).
+topbarSearchBtn.addEventListener('click', () => {
+  appShell.classList.add('sidebar-open');
+  searchInput.focus();
+});
+
+// 모바일 길게 누르기: 메시지 액션 버튼을 잠깐 완전히 보이게 한다(터치 기기에서 흔한 패턴).
+let longPressTimer = null;
+function clearLongPress() {
+  document.querySelectorAll('.msg.long-press-active').forEach((m) => m.classList.remove('long-press-active'));
+}
+chat.addEventListener(
+  'touchstart',
+  (e) => {
+    clearTimeout(longPressTimer);
+    const msg = e.target.closest('.msg');
+    if (!msg) {
+      clearLongPress();
+      return;
+    }
+    longPressTimer = setTimeout(() => {
+      clearLongPress();
+      msg.classList.add('long-press-active');
+      setTimeout(clearLongPress, 4000);
+    }, 450);
+  },
+  { passive: true }
+);
+chat.addEventListener('touchend', () => clearTimeout(longPressTimer));
+chat.addEventListener('touchmove', () => clearTimeout(longPressTimer));
 
 modeSelect.addEventListener('change', () => {
   fetch('/api/settings', {
@@ -27,9 +71,31 @@ modeSelect.addEventListener('change', () => {
   });
 });
 
+// 키보드 단축키: 입력 중이 아닐 때만 동작해서 일반 타이핑을 방해하지 않는다.
+// Ctrl/Cmd+K는 입력 중이어도 항상 동작한다(브라우저 주소창 단축키와 같은 관례).
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    searchInput.focus();
+    searchInput.select();
+    return;
+  }
+  const tag = document.activeElement?.tagName;
+  const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable;
+  if (isTyping || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === '/') {
+    e.preventDefault();
+    searchInput.focus();
+  } else if (e.key.toLowerCase() === 'n') {
+    e.preventDefault();
+    createNewProject();
+  }
+});
+
 let currentConversationId = null;
 let searchQuery = '';
 let allConversationsCache = [];
+const collapsedCategories = new Set();
 let pendingAttachments = []; // { mimeType, data(base64), previewUrl }
 
 const MAX_ATTACHMENTS = 4;
@@ -378,10 +444,20 @@ function renderProjectListFromCache() {
   }
 
   for (const [category, items] of byCategory) {
-    const heading = document.createElement('div');
-    heading.className = 'project-category';
-    heading.textContent = category;
+    const isCollapsed = collapsedCategories.has(category);
+
+    const heading = document.createElement('button');
+    heading.className = `project-category project-category-toggle${isCollapsed ? ' collapsed' : ''}`;
+    heading.innerHTML = `<svg class="category-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
+    heading.appendChild(document.createTextNode(`${category} (${items.length})`));
+    heading.addEventListener('click', () => {
+      if (collapsedCategories.has(category)) collapsedCategories.delete(category);
+      else collapsedCategories.add(category);
+      renderProjectListFromCache();
+    });
     projectList.appendChild(heading);
+
+    if (isCollapsed) continue;
 
     for (const c of items) {
       const row = document.createElement('div');

@@ -9,10 +9,22 @@ const passwordForm = document.getElementById('password-form');
 const passwordError = document.getElementById('password-error');
 const passwordSuccess = document.getElementById('password-success');
 const logoutBtn = document.getElementById('logout-btn');
+const settingsNav = document.getElementById('settings-nav');
 
 logoutBtn.addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
   location.href = '/login.html';
+});
+
+settingsNav.addEventListener('click', (e) => {
+  const btn = e.target.closest('.settings-nav-item');
+  if (!btn) return;
+  for (const navBtn of settingsNav.querySelectorAll('.settings-nav-item')) {
+    navBtn.classList.toggle('active', navBtn === btn);
+  }
+  for (const panel of document.querySelectorAll('.settings-panel')) {
+    panel.hidden = panel.dataset.panel !== btn.dataset.tab;
+  }
 });
 
 function markActive(container, value) {

@@ -166,6 +166,32 @@ html, body {
 }
 .project-category:first-child { padding-top: 0; }
 
+.project-category-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  background: none;
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.project-category-toggle:hover { color: var(--text); }
+.category-chevron {
+  width: 12px;
+  height: 12px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+.project-category-toggle.collapsed .category-chevron { transform: rotate(0deg); }
+
 .sidebar-footer {
   display: flex;
   flex-direction: column;
@@ -554,6 +580,52 @@ html, body {
 
 /* 설정 */
 
+.settings-layout { flex-direction: row; align-items: flex-start; gap: 28px; }
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+  width: 160px;
+  position: sticky;
+  top: 24px;
+}
+.settings-nav-item {
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.settings-nav-item:hover { background: var(--accent-soft); color: var(--text); }
+.settings-nav-item.active { background: var(--surface); color: var(--text); font-weight: 600; }
+
+.settings-panels {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+@media (max-width: 768px) {
+  .settings-layout { flex-direction: column; gap: 16px; }
+  .settings-nav {
+    flex-direction: row;
+    width: 100%;
+    overflow-x: auto;
+    position: static;
+    gap: 6px;
+    padding-bottom: 4px;
+  }
+  .settings-nav-item { flex-shrink: 0; }
+}
+
 .settings-section {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -695,6 +767,9 @@ html, body {
 .attach-btn:hover { color: var(--text); border-color: var(--accent); }
 .attach-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
+.plus-btn { display: none; }
+.composer-extra { display: flex; gap: 10px; }
+
 .attach-btn.recording { background: var(--danger); border-color: var(--danger); color: var(--on-accent); animation: pulse 1.2s infinite; }
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(184, 80, 58, 0.4); }
@@ -765,7 +840,23 @@ html, body {
   }
   .menu-btn { background: none; border: none; padding: 4px; cursor: pointer; }
   .menu-btn svg { width: 22px; height: 22px; stroke: var(--text); fill: none; stroke-width: 2; stroke-linecap: round; }
-  .mobile-topbar-title { font-weight: 700; font-size: 15px; }
+  .mobile-topbar-title { flex: 1; font-weight: 700; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .plus-btn { display: flex; }
+  .composer-extra { display: none; }
+  .composer-extra.open {
+    display: flex;
+    position: absolute;
+    bottom: 56px;
+    left: 14px;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+  }
 
   .sidebar {
     position: fixed;
@@ -803,3 +894,10 @@ html, body {
 @media (hover: none) {
   .copy-btn, .regen-btn, .edit-btn, .speak-btn { opacity: 0.55; }
 }
+.msg.long-press-active .copy-btn,
+.msg.long-press-active .regen-btn,
+.msg.long-press-active .edit-btn,
+.msg.long-press-active .speak-btn {
+  opacity: 1 !important;
+}
+.msg.long-press-active { background: var(--accent-soft); }

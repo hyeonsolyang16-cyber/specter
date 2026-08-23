@@ -57,19 +57,27 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
       </button>
       <span class="mobile-topbar-title">Specter</span>
+      <button id="topbar-search-btn" class="menu-btn" aria-label="대화 검색">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      </button>
     </div>
     <main id="chat" class="chat"></main>
 
     <form id="composer" class="composer">
       <div id="attachment-preview" class="attachment-preview"></div>
       <div class="composer-row">
-        <button type="button" id="attach-btn" class="attach-btn" aria-label="파일 첨부">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        <button type="button" id="plus-btn" class="attach-btn plus-btn" aria-label="더보기">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         </button>
-        <input type="file" id="file-input" accept="image/*,application/pdf" multiple hidden>
-        <button type="button" id="mic-btn" class="attach-btn" aria-label="음성 입력" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0M12 18v3"/></svg>
-        </button>
+        <div id="composer-extra" class="composer-extra">
+          <button type="button" id="attach-btn" class="attach-btn" aria-label="파일 첨부">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <input type="file" id="file-input" accept="image/*,application/pdf" multiple hidden>
+          <button type="button" id="mic-btn" class="attach-btn" aria-label="음성 입력" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0M12 18v3"/></svg>
+          </button>
+        </div>
         <textarea id="input" placeholder="Specter에게 물어보세요" rows="1"></textarea>
         <button type="submit" id="send-btn" aria-label="전송">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m0 0-6-6m6 6-6 6"/></svg>
