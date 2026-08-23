@@ -18,6 +18,86 @@ const attachmentPreview = document.getElementById('attachment-preview');
 const adminLink = document.getElementById('admin-link');
 const micBtn = document.getElementById('mic-btn');
 const modeSelect = document.getElementById('mode-select');
+const trashToggleBtn = document.getElementById('trash-toggle-btn');
+const exportBtn = document.getElementById('export-btn');
+
+exportBtn.addEventListener('click', async () => {
+  if (!currentConversationId) return;
+  const res = await fetch(`/api/conversations/${currentConversationId}`);
+  if (!res.ok) return;
+  const conversation = await res.json();
+  const lines = [`# ${conversation.title}`, ''];
+  for (const t of conversation.turns) {
+    lines.push(t.role === 'user' ? '## 사용자' : '## Specter');
+    lines.push('');
+    lines.push(t.content || '');
+    lines.push('');
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${conversation.title.replace(/[\\/:*?"<>|]/g, '_')}.md`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+let showingTrash = false;
+
+trashToggleBtn.addEventListener('click', async () => {
+  showingTrash = !showingTrash;
+  trashToggleBtn.textContent = showingTrash ? '목록으로' : '휴지통';
+  newProjectBtn.hidden = showingTrash;
+  searchInput.hidden = showingTrash;
+  if (showingTrash) await renderTrash();
+  else await renderProjectList();
+});
+
+async function renderTrash() {
+  const res = await fetch('/api/trash');
+  if (res.status === 401) return (location.href = '/login.html');
+  const items = await res.json();
+  projectList.innerHTML = '';
+  if (items.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'project-category';
+    empty.textContent = '휴지통이 비어있습니다.';
+    projectList.appendChild(empty);
+    return;
+  }
+  for (const c of items) {
+    const row = document.createElement('div');
+    row.className = 'project-row';
+    const label = document.createElement('span');
+    label.className = 'project-item';
+    label.textContent = c.title;
+    row.appendChild(label);
+
+    const restoreBtn = document.createElement('button');
+    restoreBtn.className = 'project-category-edit';
+    restoreBtn.title = '복원';
+    restoreBtn.textContent = '↺';
+    restoreBtn.addEventListener('click', async () => {
+      await fetch(`/api/trash/${c.id}/restore`, { method: 'POST' });
+      renderTrash();
+    });
+    row.appendChild(restoreBtn);
+
+    const purgeBtn = document.createElement('button');
+    purgeBtn.className = 'project-category-edit';
+    purgeBtn.title = '영구 삭제';
+    purgeBtn.textContent = '✕';
+    purgeBtn.addEventListener('click', async () => {
+      if (!confirm(`"${c.title}"을(를) 영구 삭제할까요? 되돌릴 수 없습니다.`)) return;
+      await fetch(`/api/trash/${c.id}`, { method: 'DELETE' });
+      renderTrash();
+    });
+    row.appendChild(purgeBtn);
+
+    projectList.appendChild(row);
+  }
+}
 const plusBtn = document.getElementById('plus-btn');
 const composerExtra = document.getElementById('composer-extra');
 const topbarSearchBtn = document.getElementById('topbar-search-btn');
@@ -107,10 +187,24 @@ function closeSidebar() {
 menuBtn.addEventListener('click', () => appShell.classList.toggle('sidebar-open'));
 sidebarOverlay.addEventListener('click', closeSidebar);
 
+let searchDebounceTimer = null;
 searchInput.addEventListener('input', () => {
-  searchQuery = searchInput.value.trim().toLowerCase();
-  renderProjectListFromCache();
+  searchQuery = searchInput.value.trim();
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(performSearch, 300);
 });
+
+// 제목뿐 아니라 대화 내용까지 서버에서 검색한다.
+async function performSearch() {
+  if (!searchQuery) {
+    await renderProjectList();
+    return;
+  }
+  const res = await fetch(`/api/conversations/search?q=${encodeURIComponent(searchQuery)}`);
+  if (res.status === 401) return (location.href = '/login.html');
+  allConversationsCache = await res.json();
+  renderProjectListFromCache();
+}
 
 attachBtn.addEventListener('click', () => fileInput.click());
 
@@ -336,6 +430,18 @@ function addMessage(role, text, opts = {}) {
   return el;
 }
 
+const TIER_LABELS = { lite: 'Lite', standard: 'Standard', high: 'High', max: 'Max' };
+function addTierBadge(el, tier) {
+  if (el.querySelector('.tier-badge')) return;
+  const badge = document.createElement('span');
+  badge.className = 'tier-badge';
+  badge.textContent = TIER_LABELS[tier] || tier;
+  badge.title = '이 답변에 사용된 성능 모드';
+  const label = el.querySelector('.label');
+  if (label) label.appendChild(badge);
+  else el.insertBefore(badge, el.firstChild);
+}
+
 function decorateSpecterMessage(el, body) {
   if (!el.querySelector('.regen-btn')) {
     const regenBtn = document.createElement('button');
@@ -432,9 +538,8 @@ async function renderProjectList() {
 }
 
 function renderProjectListFromCache() {
-  const conversations = searchQuery
-    ? allConversationsCache.filter((c) => c.title.toLowerCase().includes(searchQuery))
-    : allConversationsCache;
+  // 검색어가 있으면 allConversationsCache는 이미 서버에서 제목+내용 기준으로 필터링된 결과다.
+  const conversations = allConversationsCache;
 
   const byCategory = new Map();
   for (const c of conversations) {
@@ -600,6 +705,30 @@ function renderEmptyState() {
     prompts.appendChild(btn);
   }
   wrap.appendChild(prompts);
+
+  if (!localStorage.getItem('specter_seen_tips')) {
+    const tips = document.createElement('div');
+    tips.className = 'onboarding-tips';
+    tips.innerHTML = `
+      <b>알아두면 좋은 기능</b>
+      <ul>
+        <li>사이드바 상단에서 <b>성능 모드</b>(Lite~Max, 자동)를 바꿀 수 있습니다</li>
+        <li><b>설정 → 메모리</b>에 적어두면 모든 대화에서 항상 참고합니다</li>
+        <li><b>설정 → 연동</b>에서 구글 캘린더를 연결하면 채팅으로 일정을 추가/조회할 수 있습니다</li>
+        <li>입력창 옆 마이크 아이콘으로 음성 입력이 가능합니다</li>
+      </ul>
+    `;
+    const dismissBtn = document.createElement('button');
+    dismissBtn.className = 'empty-prompt-btn';
+    dismissBtn.textContent = '확인했어요';
+    dismissBtn.addEventListener('click', () => {
+      localStorage.setItem('specter_seen_tips', '1');
+      tips.remove();
+    });
+    tips.appendChild(dismissBtn);
+    wrap.appendChild(tips);
+  }
+
   chat.appendChild(wrap);
 }
 
@@ -669,6 +798,9 @@ async function handleChatResponse(res, pending, restoreText) {
     input.focus();
     return;
   }
+
+  const tier = res.headers.get('X-Specter-Tier');
+  if (tier) addTierBadge(pending, tier);
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();

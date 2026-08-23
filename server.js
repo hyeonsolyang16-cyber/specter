@@ -5,9 +5,23 @@ const pgSession = require('connect-pg-simple')(session);
 const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
+const webpush = require('web-push');
 const { GoogleGenAI, ApiError } = require('@google/genai');
 const { buildSystemPrompt } = require('./system-prompt');
 const store = require('./store');
+
+// Express 4는 async 라우트 핸들러 안에서 처리 안 된 에러(unhandled rejection)를 자동으로
+// 잡아주지 않는다. 실제로 방금(stale 세션이 지워진 유저를 참조 → FK 위반) 서버 전체가
+// 죽는 걸 확인했다 — 요청 하나의 오류가 전체 유저에게 영향을 주면 안 되므로,
+// 여기서 잡아서 로그만 남기고 프로세스는 계속 살려둔다.
+process.on('unhandledRejection', (err) => {
+  console.error('처리되지 않은 Promise 거부:', err);
+  store.logAlert('error', `unhandledRejection: ${(err?.message || String(err)).slice(0, 300)}`).catch(() => {});
+});
+process.on('uncaughtException', (err) => {
+  console.error('처리되지 않은 예외:', err);
+  store.logAlert('error', `uncaughtException: ${(err?.message || String(err)).slice(0, 300)}`).catch(() => {});
+});
 
 const PORT = process.env.PORT || 3210;
 // 콤마로 여러 관리자 이메일을 등록할 수 있다. 예: "a@x.com,b@y.com"
@@ -101,6 +115,29 @@ const sessionPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: 
 // 켜야 X-Forwarded-Proto를 보고 요청이 HTTPS인지 정확히 판단해 secure 쿠키가 정상 동작한다.
 const IS_PRODUCTION = !!process.env.RENDER;
 const app = express();
+
+// 실제로 스테일 세션(지워진 유저 참조) 하나가 async 핸들러 안에서 처리 안 된 예외를 던져
+// 서버 전체를 죽이거나(위 unhandledRejection 이전) 요청을 영원히 멈추게 하는 걸 확인했다.
+// 라우트마다 try/catch를 붙이는 대신, app.get/post/patch/delete 자체를 감싸서
+// 어떤 라우트든 예외가 나면 자동으로 next(err)로 넘어가게 만든다.
+for (const method of ['get', 'post', 'patch', 'delete']) {
+  const original = app[method].bind(app);
+  app[method] = (path, ...handlers) => {
+    const wrapped = handlers.map((h) => {
+      if (typeof h !== 'function') return h;
+      return (req, res, next) => {
+        try {
+          const result = h(req, res, next);
+          if (result && typeof result.catch === 'function') result.catch(next);
+        } catch (err) {
+          next(err);
+        }
+      };
+    });
+    return original(path, ...wrapped);
+  };
+}
+
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '48mb' }));
 app.use(
@@ -201,6 +238,13 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI;
 
+// 일정 알림용 Web Push. VAPID 키는 외부 계정 없이 자체 생성한 키 쌍이라 별도 가입이 필요 없다.
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails('mailto:admin@example.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+}
+
 app.get('/auth/google', (req, res) => {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_REDIRECT_URI) {
     return res.redirect('/login.html?error=google_not_configured');
@@ -298,12 +342,15 @@ const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
 // '자동' 모드일 때 메시지 길이/첨부/대화 길이로 모델 등급을 동적으로 고른다.
 function resolveMode(performanceMode, { textLength = 0, hasAttachments = false, turnCount = 0 } = {}) {
-  if (performanceMode !== 'auto') return PERFORMANCE_MODES[performanceMode] || PERFORMANCE_MODES.standard;
+  if (performanceMode !== 'auto') {
+    return { ...(PERFORMANCE_MODES[performanceMode] || PERFORMANCE_MODES.standard), tierName: performanceMode };
+  }
   const complexity = textLength + (hasAttachments ? 2000 : 0) + turnCount * 60;
-  if (complexity > 3000) return PERFORMANCE_MODES.max;
-  if (complexity > 1200) return PERFORMANCE_MODES.high;
-  if (complexity > 300) return PERFORMANCE_MODES.standard;
-  return PERFORMANCE_MODES.lite;
+  let tierName = 'lite';
+  if (complexity > 3000) tierName = 'max';
+  else if (complexity > 1200) tierName = 'high';
+  else if (complexity > 300) tierName = 'standard';
+  return { ...PERFORMANCE_MODES[tierName], tierName };
 }
 
 // 대화가 너무 길어지면 오래된 턴은 생략 표시로 압축해 토큰 낭비를 줄인다(요약 없이 자르기만 — 추가 비용 없음).
@@ -457,6 +504,29 @@ app.post('/api/calendar/disconnect', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/push/vapid-public-key', requireAuth, (req, res) => {
+  res.json({ key: VAPID_PUBLIC_KEY || null });
+});
+
+app.get('/api/push/status', requireAuth, async (req, res) => {
+  res.json({ subscribed: await store.hasPushSubscription(req.session.userId) });
+});
+
+app.post('/api/push/subscribe', requireAuth, async (req, res) => {
+  const subscription = req.body?.subscription;
+  if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+    return res.status(400).json({ error: '유효하지 않은 구독 정보입니다.' });
+  }
+  await store.savePushSubscription(req.session.userId, subscription);
+  res.json({ ok: true });
+});
+
+app.post('/api/push/unsubscribe', requireAuth, async (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (endpoint) await store.deletePushSubscription(endpoint);
+  res.json({ ok: true });
+});
+
 app.get('/api/account/api-token', requireAuth, async (req, res) => {
   res.json({ token: await store.getOrCreateApiToken(req.session.userId) });
 });
@@ -489,6 +559,76 @@ async function createCalendarEvent(accessToken, event) {
   });
   if (!res.ok) throw new Error(`캘린더 일정 추가 실패(${res.status}): ${await res.text()}`);
   return res.json();
+}
+
+async function listCalendarEvents(accessToken, timeMin, timeMax) {
+  const params = new URLSearchParams({ timeMin, timeMax, singleEvents: 'true', orderBy: 'startTime', maxResults: '20' });
+  const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`캘린더 조회 실패(${res.status}): ${await res.text()}`);
+  const data = await res.json();
+  return (data.items || []).map((e) => ({
+    title: e.summary || '(제목 없음)',
+    start: e.start?.dateTime || e.start?.date,
+    end: e.end?.dateTime || e.end?.date,
+  }));
+}
+
+// 일반 채팅에서도 Gemini가 필요하다고 판단하면 직접 캘린더를 조작할 수 있게 하는 도구 정의.
+const CALENDAR_FUNCTION_DECLARATIONS = [
+  {
+    name: 'create_calendar_event',
+    description: '사용자의 구글 캘린더에 새 일정을 추가한다. 사용자가 일정/미팅/약속 추가를 요청할 때 사용한다.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '일정 제목' },
+        startDateTime: { type: 'string', description: 'ISO 8601, 예: 2026-08-25T14:00:00+09:00' },
+        endDateTime: { type: 'string', description: 'ISO 8601. 시간 언급이 없으면 시작 시각+1시간' },
+      },
+      required: ['title', 'startDateTime', 'endDateTime'],
+    },
+  },
+  {
+    name: 'list_calendar_events',
+    description: '사용자의 구글 캘린더에서 특정 기간의 일정을 조회한다. "오늘/내일/이번 주 일정" 같은 질문에 사용한다.',
+    parameters: {
+      type: 'object',
+      properties: {
+        startDateTime: { type: 'string', description: '조회 시작, ISO 8601' },
+        endDateTime: { type: 'string', description: '조회 끝, ISO 8601' },
+      },
+      required: ['startDateTime', 'endDateTime'],
+    },
+  },
+];
+
+// 캘린더가 연결된 유저에게만 도구를 제공한다. 실행(execute)은 실제 구글 API를 호출한다.
+function buildCalendarToolConfig(user) {
+  if (!user?.googleCalendarRefreshToken) return null;
+  return {
+    tools: [{ functionDeclarations: CALENDAR_FUNCTION_DECLARATIONS }],
+    execute: async (name, args) => {
+      const accessToken = await getGoogleAccessToken(user.googleCalendarRefreshToken);
+      if (name === 'create_calendar_event') {
+        if (!args?.title || !args?.startDateTime || !args?.endDateTime) {
+          return { error: '제목과 시작/종료 시각이 모두 필요합니다.' };
+        }
+        await createCalendarEvent(accessToken, {
+          summary: args.title,
+          start: { dateTime: args.startDateTime },
+          end: { dateTime: args.endDateTime },
+        });
+        return { ok: true };
+      }
+      if (name === 'list_calendar_events') {
+        const events = await listCalendarEvents(accessToken, args?.startDateTime, args?.endDateTime);
+        return { events };
+      }
+      return { error: '알 수 없는 함수 호출입니다.' };
+    },
+  };
 }
 
 const VOICE_EVENT_SCHEMA = {
@@ -583,6 +723,10 @@ app.get('/api/admin/usage', requireAdmin, async (req, res) => {
   res.json(await store.getUsageSummary());
 });
 
+app.get('/api/admin/usage-trend', requireAdmin, async (req, res) => {
+  res.json(await store.getUsageTrend(14));
+});
+
 app.get('/api/admin/alerts', requireAdmin, async (req, res) => {
   res.json(await store.getRecentAlerts(30));
 });
@@ -595,6 +739,28 @@ app.post('/api/conversations', requireAuth, async (req, res) => {
 
 app.get('/api/conversations', requireAuth, async (req, res) => {
   res.json(await store.listConversations(req.session.userId));
+});
+
+app.get('/api/conversations/search', requireAuth, async (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  if (!q) return res.json(await store.listConversations(req.session.userId));
+  res.json(await store.searchConversations(req.session.userId, q));
+});
+
+app.get('/api/trash', requireAuth, async (req, res) => {
+  res.json(await store.listTrash(req.session.userId));
+});
+
+app.post('/api/trash/:id/restore', requireAuth, async (req, res) => {
+  const conversation = await store.restoreConversation(req.session.userId, req.params.id);
+  if (!conversation) return res.status(404).json({ error: '휴지통에서 찾을 수 없습니다.' });
+  res.json(conversation);
+});
+
+app.delete('/api/trash/:id', requireAuth, async (req, res) => {
+  const deleted = await store.permanentlyDeleteConversation(req.session.userId, req.params.id);
+  if (!deleted) return res.status(404).json({ error: '휴지통에서 찾을 수 없습니다.' });
+  res.json({ ok: true });
 });
 
 app.get('/api/conversations/:id', requireAuth, async (req, res) => {
@@ -662,7 +828,9 @@ function isInvalidApiKey(err) {
 
 // 스트리밍 생성 + 전송을 공통 처리한다. onComplete은 실제로 텍스트가 생성된
 // 경우에만(정지되어도 부분 텍스트가 있으면) 호출되어 DB에 저장한다.
-async function streamAndRespond(req, res, contents, systemPrompt, mode, onComplete) {
+// toolConfig가 있으면 모델이 함수 호출을 요청할 때 직접 실행하고 결과를 이어붙여 재요청한다
+// (최대 3라운드 — 도구를 계속 부르며 무한 루프에 빠지는 걸 방지).
+async function streamAndRespond(req, res, contents, systemPrompt, mode, onComplete, toolConfig) {
   let aborted = false;
   req.on('close', () => {
     aborted = true;
@@ -671,39 +839,69 @@ async function streamAndRespond(req, res, contents, systemPrompt, mode, onComple
     aborted = true;
   });
 
+  let workingContents = contents;
+
   try {
-    const stream = await generateStreamWithFallback({
-      model: mode.model,
-      contents,
-      config: {
-        systemInstruction: systemPrompt,
-        maxOutputTokens: 4096,
-        thinkingConfig: { thinkingLevel: mode.thinkingLevel },
-      },
-    });
+    for (let round = 0; round < 3; round++) {
+      const stream = await generateStreamWithFallback({
+        model: mode.model,
+        contents: workingContents,
+        config: {
+          systemInstruction: systemPrompt,
+          maxOutputTokens: 4096,
+          thinkingConfig: { thinkingLevel: mode.thinkingLevel },
+          ...(toolConfig ? { tools: toolConfig.tools } : {}),
+        },
+      });
 
-    // 첫 청크를 헤더 커밋 전에 받아본다 — 레이트리밋/키 오류 같은 실패는
-    // 보통 여기서 던져지므로, 그 경우엔 기존 JSON 에러 응답을 그대로 쓸 수 있다.
-    const iterator = stream[Symbol.asyncIterator]();
-    let result = await iterator.next();
+      // 첫 청크를 헤더 커밋 전에 받아본다 — 레이트리밋/키 오류 같은 실패는
+      // 보통 여기서 던져지므로, 그 경우엔 기존 JSON 에러 응답을 그대로 쓸 수 있다.
+      const iterator = stream[Symbol.asyncIterator]();
+      let result = await iterator.next();
 
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    let fullText = '';
-    let totalTokens = null;
-    while (!result.done) {
-      if (aborted) break;
-      if (result.value?.text) {
-        fullText += result.value.text;
-        res.write(result.value.text);
+      const functionCalls = !result.done && result.value?.functionCalls;
+      if (toolConfig && functionCalls?.length) {
+        const call = functionCalls[0];
+        let toolResult;
+        try {
+          toolResult = await toolConfig.execute(call.name, call.args);
+        } catch (err) {
+          toolResult = { error: err.message || String(err) };
+        }
+        workingContents = [
+          ...workingContents,
+          { role: 'model', parts: [{ functionCall: call }] },
+          { role: 'user', parts: [{ functionResponse: { name: call.name, response: toolResult } }] },
+        ];
+        continue; // 도구 실행 결과를 들고 다음 라운드에서 실제 답변을 받는다
       }
-      // 사용량은 보통 마지막 청크에만 누적치로 들어오므로, 매번 갱신해 마지막 값을 남긴다.
-      if (typeof result.value?.usageMetadata?.totalTokenCount === 'number') {
-        totalTokens = result.value.usageMetadata.totalTokenCount;
+
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      if (mode.tierName) res.setHeader('X-Specter-Tier', mode.tierName);
+      let fullText = '';
+      let totalTokens = null;
+      while (!result.done) {
+        if (aborted) break;
+        if (result.value?.text) {
+          fullText += result.value.text;
+          res.write(result.value.text);
+        }
+        // 사용량은 보통 마지막 청크에만 누적치로 들어오므로, 매번 갱신해 마지막 값을 남긴다.
+        if (typeof result.value?.usageMetadata?.totalTokenCount === 'number') {
+          totalTokens = result.value.usageMetadata.totalTokenCount;
+        }
+        result = await iterator.next();
       }
-      result = await iterator.next();
+
+      if (fullText) await onComplete(fullText, totalTokens);
+      res.end();
+      return;
     }
 
-    if (fullText) await onComplete(fullText, totalTokens);
+    // 라운드를 다 썼는데도 텍스트 응답이 없으면(도구 호출만 반복) 안전하게 끝낸다.
+    if (!res.headersSent) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    }
     res.end();
   } catch (err) {
     if (res.headersSent) {
@@ -778,14 +976,27 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     hasAttachments: !!attachments?.length,
     turnCount: conversation.turns.length,
   });
-  const systemPrompt = buildSystemPrompt(settings.pushbackIntensity, settings.memory);
+  const user = await store.findUserById(req.session.userId);
+  const toolConfig = buildCalendarToolConfig(user);
+  const timeContext = `\n\n현재 시각: ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} (한국 표준시)`;
+  const systemPrompt =
+    buildSystemPrompt(settings.pushbackIntensity, settings.memory) +
+    (toolConfig ? timeContext + '\n캘린더 도구를 쓸 수 있습니다. 일정 추가/조회 요청이면 반드시 도구를 사용하세요.' : '');
   const contents = toGeminiContents(compactHistory([...conversation.turns, { role: 'user', content: message, attachments }]));
 
-  await streamAndRespond(req, res, contents, systemPrompt, mode, async (fullText, totalTokens) => {
-    await store.appendTurn(req.session.userId, conversationId, 'user', message, attachments);
-    await store.appendTurn(req.session.userId, conversationId, 'model', fullText, undefined, totalTokens);
-    if (settings.autoMemory) extractMemoryInBackground(req.session.userId, message, fullText, settings.memory);
-  });
+  await streamAndRespond(
+    req,
+    res,
+    contents,
+    systemPrompt,
+    mode,
+    async (fullText, totalTokens) => {
+      await store.appendTurn(req.session.userId, conversationId, 'user', message, attachments);
+      await store.appendTurn(req.session.userId, conversationId, 'model', fullText, undefined, totalTokens);
+      if (settings.autoMemory) extractMemoryInBackground(req.session.userId, message, fullText, settings.memory);
+    },
+    toolConfig
+  );
 });
 
 // 마지막 응답을 지우고 그 직전 사용자 메시지로 새 응답만 다시 받는다.
@@ -805,12 +1016,73 @@ app.post('/api/chat/regenerate', requireAuth, async (req, res) => {
     hasAttachments: !!lastTurn.attachments?.length,
     turnCount: conversation.turns.length,
   });
-  const systemPrompt = buildSystemPrompt(settings.pushbackIntensity, settings.memory);
+  const user = await store.findUserById(req.session.userId);
+  const toolConfig = buildCalendarToolConfig(user);
+  const timeContext = `\n\n현재 시각: ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} (한국 표준시)`;
+  const systemPrompt =
+    buildSystemPrompt(settings.pushbackIntensity, settings.memory) +
+    (toolConfig ? timeContext + '\n캘린더 도구를 쓸 수 있습니다. 일정 추가/조회 요청이면 반드시 도구를 사용하세요.' : '');
   const contents = toGeminiContents(compactHistory(conversation.turns));
 
-  await streamAndRespond(req, res, contents, systemPrompt, mode, async (fullText, totalTokens) => {
-    await store.appendTurn(req.session.userId, conversationId, 'model', fullText, undefined, totalTokens);
-  });
+  await streamAndRespond(
+    req,
+    res,
+    contents,
+    systemPrompt,
+    mode,
+    async (fullText, totalTokens) => {
+      await store.appendTurn(req.session.userId, conversationId, 'model', fullText, undefined, totalTokens);
+    },
+    toolConfig
+  );
+});
+
+// 5분마다 캘린더를 연결하고 알림도 구독한 유저들의 15~20분 뒤 일정을 확인해 푸시를 보낸다.
+// 재시작해도 중복 알림이 안 가도록 알림 여부는 DB(notified_events)에 남긴다.
+async function checkUpcomingEventsAndNotify() {
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  try {
+    const users = await store.getUsersWithCalendarAndPush();
+    const now = Date.now();
+    const windowStart = new Date(now + 15 * 60 * 1000).toISOString();
+    const windowEnd = new Date(now + 20 * 60 * 1000).toISOString();
+    for (const u of users) {
+      try {
+        const accessToken = await getGoogleAccessToken(u.googleCalendarRefreshToken);
+        const events = await listCalendarEvents(accessToken, windowStart, windowEnd);
+        for (const event of events) {
+          const eventId = `${u.userId}:${event.start}:${event.title}`;
+          if (await store.wasEventNotified(eventId)) continue;
+          const payload = JSON.stringify({
+            title: 'Specter 일정 알림',
+            body: `곧 시작: ${event.title} (${new Date(event.start).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit' })})`,
+          });
+          for (const sub of u.subscriptions) {
+            try {
+              await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload);
+            } catch (err) {
+              if (err.statusCode === 404 || err.statusCode === 410) await store.deletePushSubscription(sub.endpoint);
+            }
+          }
+          await store.markEventNotified(eventId);
+        }
+      } catch (err) {
+        console.error(`유저 ${u.userId} 일정 알림 확인 실패:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('일정 알림 스케줄러 실패:', err);
+  }
+}
+setInterval(checkUpcomingEventsAndNotify, 5 * 60 * 1000);
+
+// 라우트 안에서 next(err)로 넘어온(또는 위 자동 래핑이 잡아낸) 오류를 여기서 한 곳에서 처리한다.
+// 요청이 영원히 멈추는 대신 항상 깨끗한 JSON 응답을 받게 한다.
+app.use((err, req, res, next) => {
+  console.error('처리되지 않은 라우트 오류:', err);
+  store.logAlert('error', `라우트 오류(${req.method} ${req.path}): ${(err?.message || String(err)).slice(0, 300)}`).catch(() => {});
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: '서버에서 오류가 발생했습니다. 잠시 후 다시 시도해주세요.' });
 });
 
 app.listen(PORT, () => {

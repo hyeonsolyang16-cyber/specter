@@ -102,6 +102,11 @@
             <a href="/auth/google-calendar/connect" id="calendar-connect-btn" class="reset-btn">구글 캘린더 연결</a>
             <button type="button" id="calendar-disconnect-btn" class="reset-btn" hidden>연결 해제</button>
           </div>
+          <label class="settings-checkbox" style="margin-top: 12px;">
+            <input type="checkbox" id="push-toggle">
+            일정 15분 전 알림 받기 (브라우저 알림 권한이 필요합니다)
+          </label>
+          <p id="push-status" class="settings-success"></p>
         </section>
 
         <section class="settings-section">

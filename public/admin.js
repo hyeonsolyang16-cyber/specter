@@ -19,6 +19,32 @@ function el(tag, className, text) {
   return e;
 }
 
+function renderUsageTrend(trend) {
+  const section = el('section', 'admin-user');
+  const header = el('div', 'admin-user-header');
+  header.appendChild(el('strong', null, '최근 14일 토큰 사용 추이'));
+  section.appendChild(header);
+
+  if (trend.length === 0) {
+    section.appendChild(el('p', 'admin-empty', '아직 데이터가 없습니다.'));
+    return section;
+  }
+
+  const max = Math.max(...trend.map((d) => d.tokens), 1);
+  const chart = el('div', 'usage-trend-chart');
+  for (const d of trend) {
+    const col = el('div', 'usage-trend-col');
+    const bar = el('div', 'usage-trend-bar');
+    bar.style.height = `${Math.max((d.tokens / max) * 100, 2)}%`;
+    bar.title = `${new Date(d.day).toLocaleDateString('ko-KR')}: ${d.tokens.toLocaleString('ko-KR')} 토큰`;
+    col.appendChild(bar);
+    col.appendChild(el('span', 'usage-trend-label', new Date(d.day).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' })));
+    chart.appendChild(col);
+  }
+  section.appendChild(chart);
+  return section;
+}
+
 function renderUsageTable(usage) {
   const section = el('section', 'admin-user');
 
@@ -72,20 +98,23 @@ function renderAlerts(alerts) {
 }
 
 async function load() {
-  const [convRes, usageRes, alertsRes] = await Promise.all([
+  const [convRes, usageRes, alertsRes, trendRes] = await Promise.all([
     fetch('/api/admin/conversations'),
     fetch('/api/admin/usage'),
     fetch('/api/admin/alerts'),
+    fetch('/api/admin/usage-trend'),
   ]);
   if (convRes.status === 401) return (location.href = '/login.html');
   if (convRes.status === 403) return (location.href = '/');
   const users = await convRes.json();
   const usage = usageRes.ok ? await usageRes.json() : [];
   const alerts = alertsRes.ok ? await alertsRes.json() : [];
+  const trend = trendRes.ok ? await trendRes.json() : [];
 
   content.innerHTML = '';
   const alertsSection = renderAlerts(alerts);
   if (alertsSection) content.appendChild(alertsSection);
+  content.appendChild(renderUsageTrend(trend));
   content.appendChild(renderUsageTable(usage));
 
   if (users.length === 0) {

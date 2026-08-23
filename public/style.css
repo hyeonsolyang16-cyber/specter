@@ -352,6 +352,19 @@ html, body {
   margin-bottom: 6px;
 }
 
+.tier-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+  vertical-align: middle;
+}
+
 .msg.error { border-left-color: var(--danger); }
 .msg.error .label, .msg.error .msg-body { color: var(--danger); }
 
@@ -553,6 +566,17 @@ html, body {
 .admin-usage-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .admin-usage-table th, .admin-usage-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .admin-usage-table th { color: var(--text-muted); font-weight: 600; font-size: 11.5px; }
+
+.usage-trend-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 120px;
+  padding-top: 8px;
+}
+.usage-trend-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 4px; }
+.usage-trend-bar { width: 100%; max-width: 22px; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; }
+.usage-trend-label { font-size: 9px; color: var(--text-muted); white-space: nowrap; }
 
 .admin-project {
   background: var(--surface-2);
@@ -763,6 +787,23 @@ html, body {
   cursor: pointer;
 }
 .empty-prompt-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+
+.onboarding-tips {
+  width: 100%;
+  max-width: 420px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.onboarding-tips ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--text-muted); }
+.onboarding-tips .empty-prompt-btn { align-self: flex-start; text-align: center; padding: 6px 14px; }
 
 .attach-btn {
   flex-shrink: 0;

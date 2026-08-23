@@ -17,6 +17,79 @@ const apiTokenInput = document.getElementById('api-token-input');
 const apiTokenCopyBtn = document.getElementById('api-token-copy-btn');
 const apiTokenRegenBtn = document.getElementById('api-token-regen-btn');
 const apiTokenSuccess = document.getElementById('api-token-success');
+const pushToggle = document.getElementById('push-toggle');
+const pushStatus = document.getElementById('push-status');
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+}
+
+async function loadPushStatus() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    pushToggle.disabled = true;
+    pushStatus.textContent = '이 브라우저는 알림을 지원하지 않습니다.';
+    return;
+  }
+  const res = await fetch('/api/push/status');
+  if (!res.ok) return;
+  const { subscribed } = await res.json();
+  pushToggle.checked = subscribed;
+}
+
+pushToggle.addEventListener('change', async () => {
+  if (pushToggle.checked) {
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') {
+        pushToggle.checked = false;
+        pushStatus.textContent = '알림 권한이 거부되었습니다.';
+        return;
+      }
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      await navigator.serviceWorker.ready;
+      const keyRes = await fetch('/api/push/vapid-public-key');
+      const { key } = await keyRes.json();
+      if (!key) {
+        pushToggle.checked = false;
+        pushStatus.textContent = '알림 기능이 아직 서버에 설정되지 않았습니다.';
+        return;
+      }
+      const subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(key),
+      });
+      await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription }),
+      });
+      pushStatus.textContent = '알림이 설정되었습니다.';
+    } catch (err) {
+      pushToggle.checked = false;
+      pushStatus.textContent = '알림 설정에 실패했습니다: ' + err.message;
+    }
+  } else {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await fetch('/api/push/unsubscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoint: sub.endpoint }),
+        });
+        await sub.unsubscribe();
+      }
+      pushStatus.textContent = '알림이 해제되었습니다.';
+    } catch (err) {
+      pushStatus.textContent = '';
+    }
+  }
+  setTimeout(() => (pushStatus.textContent = ''), 3000);
+});
 
 logoutBtn.addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
@@ -165,6 +238,7 @@ async function init() {
   checkCalendarQueryParam();
   await loadCalendarStatus();
   await loadApiToken();
+  await loadPushStatus();
 }
 
 init();

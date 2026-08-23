@@ -49,6 +49,18 @@ async function init() {
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS tokens INTEGER;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS google_calendar_refresh_token TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS api_token TEXT UNIQUE;
+    ALTER TABLE conversations ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      endpoint TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS notified_events (
+      event_id TEXT PRIMARY KEY,
+      notified_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     CREATE TABLE IF NOT EXISTS alerts (
       id SERIAL PRIMARY KEY,
       level TEXT NOT NULL,
@@ -161,7 +173,7 @@ async function createConversation(userId, category) {
 }
 
 function rowToConversation(row) {
-  return { id: row.id, title: row.title, category: row.category, createdAt: row.created_at };
+  return { id: row.id, title: row.title, category: row.category, createdAt: row.created_at, deletedAt: row.deleted_at };
 }
 
 async function listConversations(userId) {
@@ -169,7 +181,7 @@ async function listConversations(userId) {
   const { rows } = await pool.query(
     `SELECT c.*, COUNT(t.id)::int AS message_count
      FROM conversations c LEFT JOIN turns t ON t.conversation_id = c.id
-     WHERE c.user_id = $1
+     WHERE c.user_id = $1 AND c.deleted_at IS NULL
      GROUP BY c.id
      ORDER BY c.created_at DESC`,
     [userId]
@@ -177,12 +189,53 @@ async function listConversations(userId) {
   return rows.map((r) => ({ ...rowToConversation(r), messageCount: r.message_count }));
 }
 
+async function listTrash(userId) {
+  await ready;
+  const { rows } = await pool.query(
+    'SELECT * FROM conversations WHERE user_id = $1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC',
+    [userId]
+  );
+  return rows.map(rowToConversation);
+}
+
+async function restoreConversation(userId, conversationId) {
+  await ready;
+  const { rows } = await pool.query(
+    'UPDATE conversations SET deleted_at = NULL WHERE id = $2 AND user_id = $1 AND deleted_at IS NOT NULL RETURNING *',
+    [userId, conversationId]
+  );
+  return rows[0] ? rowToConversation(rows[0]) : null;
+}
+
+async function permanentlyDeleteConversation(userId, conversationId) {
+  await ready;
+  const { rowCount } = await pool.query(
+    'DELETE FROM conversations WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL',
+    [conversationId, userId]
+  );
+  return rowCount > 0;
+}
+
+// 제목뿐 아니라 대화 내용까지 검색한다.
+async function searchConversations(userId, query) {
+  await ready;
+  const { rows } = await pool.query(
+    `SELECT DISTINCT c.*, (SELECT COUNT(*)::int FROM turns t2 WHERE t2.conversation_id = c.id) AS message_count
+     FROM conversations c
+     LEFT JOIN turns t ON t.conversation_id = c.id
+     WHERE c.user_id = $1 AND c.deleted_at IS NULL AND (c.title ILIKE $2 OR t.content ILIKE $2)
+     ORDER BY c.created_at DESC`,
+    [userId, `%${query}%`]
+  );
+  return rows.map((r) => ({ ...rowToConversation(r), messageCount: r.message_count }));
+}
+
 async function getConversation(userId, conversationId) {
   await ready;
-  const convRes = await pool.query('SELECT * FROM conversations WHERE id = $1 AND user_id = $2', [
-    conversationId,
-    userId,
-  ]);
+  const convRes = await pool.query(
+    'SELECT * FROM conversations WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL',
+    [conversationId, userId]
+  );
   if (!convRes.rows[0]) return null;
   const turnsRes = await pool.query(
     'SELECT role, content, attachments, at FROM turns WHERE conversation_id = $1 ORDER BY at ASC',
@@ -194,10 +247,10 @@ async function getConversation(userId, conversationId) {
 // 편집/재생성 시 특정 시점 이후의 turn을 모두 지운다. keepCount개만 남긴다.
 async function rewindConversation(userId, conversationId, keepCount) {
   await ready;
-  const owns = await pool.query('SELECT id FROM conversations WHERE id = $1 AND user_id = $2', [
-    conversationId,
-    userId,
-  ]);
+  const owns = await pool.query(
+    'SELECT id FROM conversations WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL',
+    [conversationId, userId]
+  );
   if (!owns.rows[0]) return null;
   await pool.query(
     `DELETE FROM turns WHERE conversation_id = $1 AND id NOT IN (
@@ -227,12 +280,13 @@ async function renameConversation(userId, conversationId, title) {
   return rows[0] ? rowToConversation(rows[0]) : null;
 }
 
+// 바로 지우지 않고 휴지통으로 옮긴다 — 실수로 지웠을 때 복구할 수 있게.
 async function deleteConversation(userId, conversationId) {
   await ready;
-  const { rowCount } = await pool.query('DELETE FROM conversations WHERE id = $1 AND user_id = $2', [
-    conversationId,
-    userId,
-  ]);
+  const { rowCount } = await pool.query(
+    'UPDATE conversations SET deleted_at = now() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL',
+    [conversationId, userId]
+  );
   return rowCount > 0;
 }
 
@@ -280,6 +334,20 @@ async function getUsageSummary() {
     conversationCount: r.conversation_count,
     totalTokens: Number(r.total_tokens),
   }));
+}
+
+// 최근 N일간 일별 토큰 사용량 추이(관리자 대시보드 그래프용).
+async function getUsageTrend(days = 14) {
+  await ready;
+  const { rows } = await pool.query(
+    `SELECT date_trunc('day', at) AS day, COALESCE(SUM(tokens), 0)::bigint AS tokens
+     FROM turns
+     WHERE role = 'model' AND at > now() - ($1 || ' days')::interval
+     GROUP BY day
+     ORDER BY day ASC`,
+    [days]
+  );
+  return rows.map((r) => ({ day: r.day, tokens: Number(r.tokens) }));
 }
 
 async function getAllConversationsWithEmails() {
@@ -376,6 +444,60 @@ async function findUserByApiToken(token) {
   return rows[0] ? rowToUser(rows[0]) : null;
 }
 
+// ---- 일정 알림용 Web Push 구독 ----
+
+async function savePushSubscription(userId, subscription) {
+  await ready;
+  await pool.query(
+    `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (endpoint) DO UPDATE SET user_id = $2, p256dh = $3, auth = $4`,
+    [subscription.endpoint, userId, subscription.keys.p256dh, subscription.keys.auth]
+  );
+}
+
+async function deletePushSubscription(endpoint) {
+  await ready;
+  await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
+}
+
+async function hasPushSubscription(userId) {
+  await ready;
+  const { rows } = await pool.query('SELECT 1 FROM push_subscriptions WHERE user_id = $1 LIMIT 1', [userId]);
+  return rows.length > 0;
+}
+
+// 캘린더도 연결하고 알림 구독도 한 유저 + 그 구독 목록을 함께 반환한다(알림 스케줄러용).
+async function getUsersWithCalendarAndPush() {
+  await ready;
+  const { rows } = await pool.query(`
+    SELECT u.id, u.google_calendar_refresh_token,
+      COALESCE(json_agg(json_build_object('endpoint', p.endpoint, 'p256dh', p.p256dh, 'auth', p.auth))
+        FILTER (WHERE p.endpoint IS NOT NULL), '[]') AS subscriptions
+    FROM users u
+    JOIN push_subscriptions p ON p.user_id = u.id
+    WHERE u.google_calendar_refresh_token IS NOT NULL
+    GROUP BY u.id
+  `);
+  return rows.map((r) => ({
+    userId: r.id,
+    googleCalendarRefreshToken: r.google_calendar_refresh_token,
+    subscriptions: r.subscriptions,
+  }));
+}
+
+async function wasEventNotified(eventId) {
+  await ready;
+  const { rows } = await pool.query('SELECT 1 FROM notified_events WHERE event_id = $1', [eventId]);
+  return rows.length > 0;
+}
+
+async function markEventNotified(eventId) {
+  await ready;
+  await pool.query('INSERT INTO notified_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING', [eventId]);
+  // 오래된 기록은 정리한다(무한정 쌓이지 않게).
+  await pool.query("DELETE FROM notified_events WHERE notified_at < now() - interval '2 days'");
+}
+
 module.exports = {
   findUserByEmail,
   findUserById,
@@ -386,6 +508,10 @@ module.exports = {
   updatePasswordHash,
   createConversation,
   listConversations,
+  searchConversations,
+  listTrash,
+  restoreConversation,
+  permanentlyDeleteConversation,
   getConversation,
   setConversationCategory,
   renameConversation,
@@ -394,6 +520,7 @@ module.exports = {
   appendTurn,
   getAllConversationsWithEmails,
   getUsageSummary,
+  getUsageTrend,
   logAlert,
   getRecentAlerts,
   createPasswordReset,
@@ -403,4 +530,10 @@ module.exports = {
   getOrCreateApiToken,
   regenerateApiToken,
   findUserByApiToken,
+  savePushSubscription,
+  deletePushSubscription,
+  hasPushSubscription,
+  getUsersWithCalendarAndPush,
+  wasEventNotified,
+  markEventNotified,
 };
