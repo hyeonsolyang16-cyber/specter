@@ -10,7 +10,13 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-const DEFAULT_SETTINGS = { performanceMode: 'standard', pushbackIntensity: 'strong', theme: 'light', memory: '' };
+const DEFAULT_SETTINGS = {
+  performanceMode: 'standard',
+  pushbackIntensity: 'strong',
+  theme: 'light',
+  memory: '',
+  autoMemory: false,
+};
 
 async function init() {
   await pool.query(`
@@ -40,6 +46,18 @@ async function init() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE;
     ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS tokens INTEGER;
+    CREATE TABLE IF NOT EXISTS alerts (
+      id SERIAL PRIMARY KEY,
+      level TEXT NOT NULL,
+      message TEXT NOT NULL,
+      at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS password_resets (
+      token TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 }
 const ready = init().catch((err) => {
@@ -280,6 +298,44 @@ async function getAllConversationsWithEmails() {
   return result;
 }
 
+// ---- 시스템 알림(모델 장애, 심각한 오류 등을 관리자 화면에서 볼 수 있게) ----
+
+async function logAlert(level, message) {
+  await ready;
+  await pool.query('INSERT INTO alerts (level, message) VALUES ($1, $2)', [level, message]);
+}
+
+async function getRecentAlerts(limit = 20) {
+  await ready;
+  const { rows } = await pool.query('SELECT level, message, at FROM alerts ORDER BY at DESC LIMIT $1', [limit]);
+  return rows;
+}
+
+// ---- 비밀번호 재설정 ----
+
+async function createPasswordReset(userId) {
+  await ready;
+  const token = newId() + newId();
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1시간
+  await pool.query('DELETE FROM password_resets WHERE user_id = $1', [userId]);
+  await pool.query('INSERT INTO password_resets (token, user_id, expires_at) VALUES ($1, $2, $3)', [
+    token,
+    userId,
+    expiresAt,
+  ]);
+  return token;
+}
+
+async function consumePasswordReset(token) {
+  await ready;
+  const { rows } = await pool.query('SELECT user_id, expires_at FROM password_resets WHERE token = $1', [token]);
+  const row = rows[0];
+  if (!row) return null;
+  await pool.query('DELETE FROM password_resets WHERE token = $1', [token]);
+  if (new Date(row.expires_at).getTime() < Date.now()) return null;
+  return row.user_id;
+}
+
 module.exports = {
   findUserByEmail,
   findUserById,
@@ -298,4 +354,8 @@ module.exports = {
   appendTurn,
   getAllConversationsWithEmails,
   getUsageSummary,
+  logAlert,
+  getRecentAlerts,
+  createPasswordReset,
+  consumePasswordReset,
 };

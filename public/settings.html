@@ -45,12 +45,14 @@
         <button type="button" data-value="standard">Standard</button>
         <button type="button" data-value="high">High</button>
         <button type="button" data-value="max">Max</button>
+        <button type="button" data-value="auto">자동</button>
       </div>
       <ul class="settings-mode-desc">
         <li><b>Lite</b> — 가장 빠르고 가벼움, 간단한 질문에 적합, 무료 사용량 가장 적게 사용</li>
         <li><b>Standard</b> — 기본값, 대부분의 검토에 적합한 균형 모드</li>
         <li><b>High</b> — 더 깊이 생각한 뒤 답변, 복잡한 의사결정 검토에 적합</li>
         <li><b>Max</b> — 가장 최신 모델 + 최고 사고 강도, 가장 정교하지만 무료 사용량을 가장 많이 사용</li>
+        <li><b>자동</b> — 메시지 길이·첨부·대화 길이를 보고 매번 알맞은 등급을 자동으로 고릅니다</li>
       </ul>
     </section>
 
@@ -59,6 +61,10 @@
       <p class="settings-desc">여기 적어두면 모든 대화에서 항상 참고합니다. (최대 2000자, 추가 비용 없음)</p>
       <form id="memory-form" class="settings-form">
         <textarea id="memory-input" rows="4" maxlength="2000" placeholder="예: 나는 스타트업 대표고, 항상 리스크와 실행 가능성 위주로 검토해줘"></textarea>
+        <label class="settings-checkbox">
+          <input type="checkbox" id="auto-memory-toggle">
+          자동 메모리 — 대화 중 기억할 만한 내용을 Specter가 스스로 판단해 추가합니다 (메시지마다 가벼운 API 호출이 하나 더 발생해 무료 사용량을 더 씁니다)
+        </label>
         <p id="memory-success" class="settings-success"></p>
         <button type="submit">메모리 저장</button>
       </form>

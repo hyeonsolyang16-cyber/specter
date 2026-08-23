@@ -17,6 +17,15 @@ const fileInput = document.getElementById('file-input');
 const attachmentPreview = document.getElementById('attachment-preview');
 const adminLink = document.getElementById('admin-link');
 const micBtn = document.getElementById('mic-btn');
+const modeSelect = document.getElementById('mode-select');
+
+modeSelect.addEventListener('change', () => {
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ performanceMode: modeSelect.value }),
+  });
+});
 
 let currentConversationId = null;
 let searchQuery = '';
@@ -24,7 +33,7 @@ let allConversationsCache = [];
 let pendingAttachments = []; // { mimeType, data(base64), previewUrl }
 
 const MAX_ATTACHMENTS = 4;
-const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
 function closeSidebar() {
   appShell.classList.remove('sidebar-open');
@@ -53,7 +62,7 @@ fileInput.addEventListener('change', async () => {
       continue;
     }
     if (file.size > MAX_ATTACHMENT_BYTES) {
-      alert(`${file.name} 파일이 너무 큽니다. 4MB 이하만 첨부할 수 있습니다.`);
+      alert(`${file.name} 파일이 너무 큽니다. 8MB 이하만 첨부할 수 있습니다.`);
       continue;
     }
     const dataUrl = await new Promise((resolve, reject) => {
@@ -701,6 +710,7 @@ async function init() {
   const me = await meRes.json();
   userEmailEl.textContent = me.email;
   adminLink.hidden = !me.isAdmin;
+  modeSelect.value = me.settings?.performanceMode || 'standard';
   document.documentElement.setAttribute('data-theme', me.settings?.theme || 'light');
 
   const conversations = await renderProjectList();

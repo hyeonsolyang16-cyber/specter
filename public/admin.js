@@ -53,14 +53,39 @@ function renderUsageTable(usage) {
   return section;
 }
 
+function renderAlerts(alerts) {
+  if (alerts.length === 0) return null;
+  const section = el('section', 'admin-user admin-alerts');
+  const header = el('div', 'admin-user-header');
+  header.appendChild(el('strong', null, `⚠ 시스템 알림 (${alerts.length})`));
+  header.appendChild(el('span', null, '모델 장애·API 오류 등 자동 감지된 문제입니다'));
+  section.appendChild(header);
+  const list = el('div', 'admin-turns');
+  for (const a of alerts) {
+    const item = el('div', 'admin-turn model');
+    item.appendChild(el('span', 'admin-turn-meta', formatTime(a.at)));
+    item.appendChild(el('div', 'admin-turn-body', a.message));
+    list.appendChild(item);
+  }
+  section.appendChild(list);
+  return section;
+}
+
 async function load() {
-  const [convRes, usageRes] = await Promise.all([fetch('/api/admin/conversations'), fetch('/api/admin/usage')]);
+  const [convRes, usageRes, alertsRes] = await Promise.all([
+    fetch('/api/admin/conversations'),
+    fetch('/api/admin/usage'),
+    fetch('/api/admin/alerts'),
+  ]);
   if (convRes.status === 401) return (location.href = '/login.html');
   if (convRes.status === 403) return (location.href = '/');
   const users = await convRes.json();
   const usage = usageRes.ok ? await usageRes.json() : [];
+  const alerts = alertsRes.ok ? await alertsRes.json() : [];
 
   content.innerHTML = '';
+  const alertsSection = renderAlerts(alerts);
+  if (alertsSection) content.appendChild(alertsSection);
   content.appendChild(renderUsageTable(usage));
 
   if (users.length === 0) {

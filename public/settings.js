@@ -4,6 +4,7 @@ const themeOptions = document.getElementById('theme-options');
 const memoryForm = document.getElementById('memory-form');
 const memoryInput = document.getElementById('memory-input');
 const memorySuccess = document.getElementById('memory-success');
+const autoMemoryToggle = document.getElementById('auto-memory-toggle');
 const passwordForm = document.getElementById('password-form');
 const passwordError = document.getElementById('password-error');
 const passwordSuccess = document.getElementById('password-success');
@@ -53,7 +54,7 @@ themeOptions.addEventListener('click', (e) => {
 memoryForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   memorySuccess.textContent = '';
-  await saveSetting('memory', memoryInput.value);
+  await Promise.all([saveSetting('memory', memoryInput.value), saveSetting('autoMemory', autoMemoryToggle.checked)]);
   memorySuccess.textContent = '저장되었습니다.';
   setTimeout(() => (memorySuccess.textContent = ''), 2000);
 });
@@ -88,6 +89,7 @@ async function init() {
   markActive(performanceOptions, settings.performanceMode);
   markActive(themeOptions, settings.theme);
   memoryInput.value = settings.memory || '';
+  autoMemoryToggle.checked = !!settings.autoMemory;
 }
 
 init();

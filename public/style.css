@@ -88,6 +88,20 @@ html, body {
 .search-input::placeholder { color: var(--text-muted); }
 .search-input:focus { outline: none; border-color: var(--accent); }
 
+.mode-select {
+  margin: 8px 0 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  width: 100%;
+  cursor: pointer;
+}
+.mode-select:focus { outline: none; border-color: var(--accent); }
+
 .project-list {
   flex: 1;
   overflow-y: auto;
@@ -494,6 +508,8 @@ html, body {
   border-radius: 12px;
   padding: 16px 18px;
 }
+.admin-alerts { border-color: var(--danger); }
+.admin-alerts .admin-turn { border-left-color: var(--danger); }
 
 .admin-user-header {
   display: flex;
@@ -603,6 +619,16 @@ html, body {
 }
 .settings-form button[type="submit"]:hover { background: var(--accent); }
 .settings-success { color: var(--accent-strong); font-size: 12.5px; margin: 0; }
+
+.settings-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.settings-checkbox input { margin-top: 2px; flex-shrink: 0; }
 
 /* 메시지 액션(재생성/편집), 빈 상태, 첨부 */
 

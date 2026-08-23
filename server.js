@@ -38,7 +38,61 @@ if (!process.env.SESSION_SECRET) {
   process.exit(1);
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// 콤마로 여러 키를 등록하면, 하나가 할당량 초과/무효 상태여도 다음 키로 자동 전환한다.
+// 키가 1개뿐이면 지금까지와 동일하게 동작한다.
+const GEMINI_KEYS = process.env.GEMINI_API_KEY.split(',').map((k) => k.trim()).filter(Boolean);
+const aiClients = GEMINI_KEYS.map((key) => new GoogleGenAI({ apiKey: key }));
+
+function isRetryableGeminiError(err) {
+  return err instanceof ApiError && (err.status === 429 || (err.status === 400 && isInvalidApiKey(err)));
+}
+
+async function generateWithFallback(params) {
+  let lastErr;
+  for (const client of aiClients) {
+    try {
+      return await client.models.generateContent(params);
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryableGeminiError(err)) throw err;
+    }
+  }
+  throw lastErr;
+}
+
+async function generateStreamWithFallback(params) {
+  let lastErr;
+  for (const client of aiClients) {
+    try {
+      return await client.models.generateContentStream(params);
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryableGeminiError(err)) throw err;
+    }
+  }
+  throw lastErr;
+}
+
+// 설정된 모델들이 실제로 살아있는지 시작 시 한 번 점검한다. 할당량 초과(429)는 모델 자체의
+// 문제가 아니므로 건너뛰고, 그 외 오류(폐기된 모델 등)만 관리자 알림으로 남긴다.
+async function checkModelHealth() {
+  const uniqueModels = [...new Set(Object.values(PERFORMANCE_MODES).map((m) => m.model))];
+  for (const model of uniqueModels) {
+    try {
+      await generateWithFallback({
+        model,
+        contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
+        config: { maxOutputTokens: 5 },
+      });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 429) continue;
+      const msg = `모델 점검 실패: ${model} — ${(err.message || String(err)).slice(0, 200)}`;
+      console.error(msg);
+      store.logAlert('error', msg).catch(() => {});
+    }
+  }
+}
+checkModelHealth();
 
 // 세션을 DB에 저장해 재배포(=서버 재시작)해도 로그인이 풀리지 않도록 한다.
 const sessionPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
@@ -48,7 +102,7 @@ const sessionPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: 
 const IS_PRODUCTION = !!process.env.RENDER;
 const app = express();
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '25mb' }));
+app.use(express.json({ limit: '48mb' }));
 app.use(
   session({
     store: new pgSession({ pool: sessionPool, tableName: 'session', createTableIfMissing: true }),
@@ -205,11 +259,35 @@ app.get('/api/me', requireAuth, async (req, res) => {
   res.json({ email: user?.email, isAdmin: !!req.session.isAdmin, settings: await store.getSettings(req.session.userId) });
 });
 
-const VALID_PERFORMANCE_MODES = Object.keys(PERFORMANCE_MODES);
+const VALID_PERFORMANCE_MODES = [...Object.keys(PERFORMANCE_MODES), 'auto'];
 const VALID_INTENSITIES = ['mild', 'strong'];
 const VALID_THEMES = ['light', 'dark'];
 const MAX_ATTACHMENTS = 4;
-const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
+// '자동' 모드일 때 메시지 길이/첨부/대화 길이로 모델 등급을 동적으로 고른다.
+function resolveMode(performanceMode, { textLength = 0, hasAttachments = false, turnCount = 0 } = {}) {
+  if (performanceMode !== 'auto') return PERFORMANCE_MODES[performanceMode] || PERFORMANCE_MODES.standard;
+  const complexity = textLength + (hasAttachments ? 2000 : 0) + turnCount * 60;
+  if (complexity > 3000) return PERFORMANCE_MODES.max;
+  if (complexity > 1200) return PERFORMANCE_MODES.high;
+  if (complexity > 300) return PERFORMANCE_MODES.standard;
+  return PERFORMANCE_MODES.lite;
+}
+
+// 대화가 너무 길어지면 오래된 턴은 생략 표시로 압축해 토큰 낭비를 줄인다(요약 없이 자르기만 — 추가 비용 없음).
+const MAX_HISTORY_TURNS = 30;
+function compactHistory(turns) {
+  if (turns.length <= MAX_HISTORY_TURNS) return turns;
+  let startIdx = turns.length - MAX_HISTORY_TURNS;
+  if (turns[startIdx].role !== 'user' && startIdx > 0) startIdx -= 1;
+  const dropped = startIdx;
+  const recent = turns.slice(startIdx).map((t) => ({ ...t }));
+  if (dropped > 0 && recent[0]) {
+    recent[0] = { ...recent[0], content: `[이전 대화 ${dropped}턴은 길이 제한으로 생략됨]\n\n${recent[0].content || ''}` };
+  }
+  return recent;
+}
 
 // base64 문자열 길이로 원본 바이트 크기를 역산해 개수/용량 제한을 검증한다.
 function validateAttachments(attachments) {
@@ -224,7 +302,7 @@ function validateAttachments(attachments) {
       return '첨부파일 형식이 올바르지 않습니다. 이미지 또는 PDF만 가능합니다.';
     }
     if (a.data.length * 0.75 > MAX_ATTACHMENT_BYTES) {
-      return '첨부파일은 4MB 이하만 가능합니다.';
+      return '첨부파일은 8MB 이하만 가능합니다.';
     }
   }
   return null;
@@ -237,13 +315,16 @@ app.get('/api/settings', requireAuth, async (req, res) => {
 const MAX_MEMORY_LENGTH = 2000;
 
 app.post('/api/settings', requireAuth, async (req, res) => {
-  const { performanceMode, pushbackIntensity, theme, memory } = req.body || {};
+  const { performanceMode, pushbackIntensity, theme, memory, autoMemory } = req.body || {};
   const patch = {};
   if (memory !== undefined) {
     if (typeof memory !== 'string' || memory.length > MAX_MEMORY_LENGTH) {
       return res.status(400).json({ error: `메모리는 ${MAX_MEMORY_LENGTH}자 이하로 입력하세요.` });
     }
     patch.memory = memory;
+  }
+  if (autoMemory !== undefined) {
+    patch.autoMemory = !!autoMemory;
   }
   if (performanceMode !== undefined) {
     if (!VALID_PERFORMANCE_MODES.includes(performanceMode)) {
@@ -280,12 +361,69 @@ app.post('/api/account/password', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// 비밀번호 찾기: Resend로 재설정 링크를 보낸다. RESEND_API_KEY가 없으면 기능 자체가 비활성 상태다.
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM = process.env.RESEND_FROM || 'Specter <onboarding@resend.dev>';
+const APP_BASE_URL = process.env.APP_BASE_URL || `http://localhost:${PORT}`;
+
+async function sendEmail(to, subject, html) {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: RESEND_FROM, to, subject, html }),
+  });
+  if (!res.ok) throw new Error(`이메일 발송 실패(${res.status}): ${await res.text()}`);
+}
+
+app.post('/api/forgot-password', authLimiter, async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  // 가입 여부를 노출하지 않기 위해 실제로 계정이 있든 없든 항상 같은 응답을 준다.
+  const genericResponse = { ok: true, message: '해당 이메일로 가입된 계정이 있다면 재설정 링크를 보냈습니다.' };
+  if (!EMAIL_RE.test(email)) return res.json(genericResponse);
+  if (!RESEND_API_KEY) {
+    console.error('비밀번호 재설정 요청이 왔지만 RESEND_API_KEY가 설정되지 않았습니다.');
+    return res.status(503).json({ error: '이메일 발송 기능이 아직 설정되지 않았습니다. 관리자에게 문의하세요.' });
+  }
+  const user = await store.findUserByEmail(email);
+  if (!user) return res.json(genericResponse);
+  const token = await store.createPasswordReset(user.id);
+  const link = `${APP_BASE_URL}/reset-password.html?token=${token}`;
+  try {
+    await sendEmail(
+      user.email,
+      'Specter 비밀번호 재설정',
+      `<p>아래 링크를 클릭해 비밀번호를 재설정하세요. 1시간 동안 유효합니다.</p><p><a href="${link}">${link}</a></p><p>본인이 요청하지 않았다면 이 메일을 무시하세요.</p>`
+    );
+  } catch (err) {
+    console.error(err);
+    store.logAlert('error', `비밀번호 재설정 이메일 발송 실패: ${err.message}`).catch(() => {});
+    return res.status(502).json({ error: '이메일 발송에 실패했습니다.' });
+  }
+  res.json(genericResponse);
+});
+
+app.post('/api/reset-password', authLimiter, async (req, res) => {
+  const { token, newPassword } = req.body || {};
+  if (!token || !newPassword || newPassword.length < 8) {
+    return res.status(400).json({ error: '토큰과 8자 이상의 새 비밀번호가 필요합니다.' });
+  }
+  const userId = await store.consumePasswordReset(token);
+  if (!userId) return res.status(400).json({ error: '유효하지 않거나 만료된 링크입니다. 다시 요청해주세요.' });
+  const newHash = await bcrypt.hash(newPassword, 10);
+  await store.updatePasswordHash(userId, newHash);
+  res.json({ ok: true });
+});
+
 app.get('/api/admin/conversations', requireAdmin, async (req, res) => {
   res.json(await store.getAllConversationsWithEmails());
 });
 
 app.get('/api/admin/usage', requireAdmin, async (req, res) => {
   res.json(await store.getUsageSummary());
+});
+
+app.get('/api/admin/alerts', requireAdmin, async (req, res) => {
+  res.json(await store.getRecentAlerts(30));
 });
 
 app.post('/api/conversations', requireAuth, async (req, res) => {
@@ -363,7 +501,7 @@ function isInvalidApiKey(err) {
 
 // 스트리밍 생성 + 전송을 공통 처리한다. onComplete은 실제로 텍스트가 생성된
 // 경우에만(정지되어도 부분 텍스트가 있으면) 호출되어 DB에 저장한다.
-async function streamAndRespond(req, res, contents, settings, onComplete) {
+async function streamAndRespond(req, res, contents, systemPrompt, mode, onComplete) {
   let aborted = false;
   req.on('close', () => {
     aborted = true;
@@ -372,14 +510,12 @@ async function streamAndRespond(req, res, contents, settings, onComplete) {
     aborted = true;
   });
 
-  const mode = PERFORMANCE_MODES[settings.performanceMode] || PERFORMANCE_MODES.standard;
-
   try {
-    const stream = await ai.models.generateContentStream({
+    const stream = await generateStreamWithFallback({
       model: mode.model,
       contents,
       config: {
-        systemInstruction: buildSystemPrompt(settings.pushbackIntensity, settings.memory),
+        systemInstruction: systemPrompt,
         maxOutputTokens: 4096,
         thinkingConfig: { thinkingLevel: mode.thinkingLevel },
       },
@@ -423,10 +559,40 @@ async function streamAndRespond(req, res, contents, settings, onComplete) {
       });
     }
     if (err instanceof ApiError && err.status === 400 && isInvalidApiKey(err)) {
+      store.logAlert('error', `API 키가 유효하지 않습니다: ${err.message?.slice(0, 200)}`).catch(() => {});
       return res.status(401).json({ kind: 'auth', error: 'API 키가 유효하지 않습니다. .env 파일을 확인하세요.' });
     }
     console.error(err);
+    store.logAlert('error', `Gemini 호출 실패: ${(err.message || String(err)).slice(0, 300)}`).catch(() => {});
     res.status(502).json({ kind: 'unknown', error: 'Gemini API 호출에 실패했습니다.' });
+  }
+}
+
+// 자동 메모리: 대화 한 턴에서 앞으로 기억할 만한 사실이 있는지 가장 가벼운 모델로 판단해 저장한다.
+// 응답 전송을 막지 않도록 항상 fire-and-forget으로 호출한다.
+const MEMORY_EXTRACT_MODEL = 'gemini-3.5-flash-lite';
+async function extractMemoryInBackground(userId, userMessage, modelReply, currentMemory) {
+  try {
+    if (!userMessage || userMessage.length < 40) return; // 너무 짧으면 기억할 내용이 없다고 보고 건너뛴다
+    const prompt = `다음은 사용자와 AI의 대화 한 턴입니다. 사용자에 대해 앞으로의 모든 대화에서 항상 참고하면 유용할 "사실이나 선호"가 새로 있으면 한 줄로 요약하고, 없거나 기존 메모리와 중복되면 정확히 "NONE"이라고만 답하세요.\n\n기존 메모리:\n${currentMemory || '(없음)'}\n\n사용자: ${userMessage}\nAI: ${modelReply.slice(0, 500)}`;
+    const result = await generateWithFallback({
+      model: MEMORY_EXTRACT_MODEL,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: { maxOutputTokens: 80, thinkingConfig: { thinkingLevel: 'minimal' } },
+    });
+    const fact = (result.text || '').trim();
+    if (!fact || fact.toUpperCase().startsWith('NONE')) return;
+
+    const settings = await store.getSettings(userId);
+    let updated = settings.memory ? `${settings.memory}\n- ${fact}` : `- ${fact}`;
+    if (updated.length > MAX_MEMORY_LENGTH) {
+      const lines = updated.split('\n');
+      while (lines.join('\n').length > MAX_MEMORY_LENGTH && lines.length > 1) lines.shift();
+      updated = lines.join('\n');
+    }
+    await store.updateSettings(userId, { memory: updated });
+  } catch (err) {
+    console.error('자동 메모리 추출 실패:', err.message);
   }
 }
 
@@ -446,11 +612,18 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   }
 
   const settings = await store.getSettings(req.session.userId);
-  const contents = toGeminiContents([...conversation.turns, { role: 'user', content: message, attachments }]);
+  const mode = resolveMode(settings.performanceMode, {
+    textLength: message.length,
+    hasAttachments: !!attachments?.length,
+    turnCount: conversation.turns.length,
+  });
+  const systemPrompt = buildSystemPrompt(settings.pushbackIntensity, settings.memory);
+  const contents = toGeminiContents(compactHistory([...conversation.turns, { role: 'user', content: message, attachments }]));
 
-  await streamAndRespond(req, res, contents, settings, async (fullText, totalTokens) => {
+  await streamAndRespond(req, res, contents, systemPrompt, mode, async (fullText, totalTokens) => {
     await store.appendTurn(req.session.userId, conversationId, 'user', message, attachments);
     await store.appendTurn(req.session.userId, conversationId, 'model', fullText, undefined, totalTokens);
+    if (settings.autoMemory) extractMemoryInBackground(req.session.userId, message, fullText, settings.memory);
   });
 });
 
@@ -466,9 +639,15 @@ app.post('/api/chat/regenerate', requireAuth, async (req, res) => {
   }
 
   const settings = await store.getSettings(req.session.userId);
-  const contents = toGeminiContents(conversation.turns);
+  const mode = resolveMode(settings.performanceMode, {
+    textLength: lastTurn.content?.length || 0,
+    hasAttachments: !!lastTurn.attachments?.length,
+    turnCount: conversation.turns.length,
+  });
+  const systemPrompt = buildSystemPrompt(settings.pushbackIntensity, settings.memory);
+  const contents = toGeminiContents(compactHistory(conversation.turns));
 
-  await streamAndRespond(req, res, contents, settings, async (fullText, totalTokens) => {
+  await streamAndRespond(req, res, contents, systemPrompt, mode, async (fullText, totalTokens) => {
     await store.appendTurn(req.session.userId, conversationId, 'model', fullText, undefined, totalTokens);
   });
 });
