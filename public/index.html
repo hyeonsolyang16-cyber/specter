@@ -32,19 +32,6 @@
       새 프로젝트
     </button>
     <input id="search-input" class="search-input" type="search" placeholder="대화 검색">
-    <div class="sidebar-quick-row">
-      <select id="mode-select" class="mode-select" title="성능 모드">
-        <option value="lite">Lite</option>
-        <option value="standard">Standard</option>
-        <option value="high">High</option>
-        <option value="max">Max</option>
-        <option value="auto">자동</option>
-      </select>
-      <div class="intensity-toggle" id="intensity-toggle" title="판단 강도">
-        <button type="button" data-value="mild">약하게</button>
-        <button type="button" data-value="strong">강하게</button>
-      </div>
-    </div>
     <nav id="project-list" class="project-list"></nav>
     <div class="sidebar-footer">
       <span id="user-email" class="user-email"></span>
@@ -108,6 +95,19 @@
         <button type="submit" id="send-btn" aria-label="전송">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m0 0-6-6m6 6-6 6"/></svg>
         </button>
+      </div>
+      <div class="composer-controls">
+        <div class="intensity-toggle" id="intensity-toggle" title="판단 강도">
+          <button type="button" data-value="mild">약하게</button>
+          <button type="button" data-value="strong">강하게</button>
+        </div>
+        <select id="mode-select" class="composer-pill" title="성능 모드">
+          <option value="lite">Lite</option>
+          <option value="standard">Standard</option>
+          <option value="high">High</option>
+          <option value="max">Max</option>
+          <option value="auto">자동</option>
+        </select>
       </div>
     </form>
   </div>

@@ -103,26 +103,46 @@ html, body {
 }
 .mode-select:focus { outline: none; border-color: var(--accent); }
 
-.sidebar-quick-row { display: flex; flex-direction: column; gap: 6px; }
-.sidebar-quick-row .mode-select { margin: 8px 0 0; }
+/* ---- 입력창 하단 컨트롤 바(성능 모드 / 판단 강도) — 모델·사고 강도를 고르는
+   채팅 도구들의 미니멀한 하단 바 스타일을 참고했다: 옅은 회색 텍스트, 테두리 없는 pill,
+   호버에서만 배경이 살짝 드러난다. ---- */
+.composer-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 
-.intensity-toggle { display: flex; gap: 4px; }
+.intensity-toggle { display: flex; gap: 2px; }
 .intensity-toggle button {
-  flex: 1;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 6px 8px;
-  border-radius: 8px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 4px 10px;
+  border-radius: 14px;
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
 }
+.intensity-toggle button:hover:not(.active) { background: var(--surface-2); color: var(--text); }
 .intensity-toggle button.active {
-  background: var(--accent-strong);
-  color: var(--on-accent);
-  border-color: var(--accent-strong);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
 }
+
+.composer-pill {
+  appearance: none;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  cursor: pointer;
+}
+.composer-pill:hover { background: var(--surface-2); color: var(--text); }
+.composer-pill:focus { outline: none; }
 
 .project-list {
   flex: 1;
