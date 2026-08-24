@@ -103,6 +103,17 @@ async function init() {
       created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- 민감하거나 되돌리기 어려운 조작에 대한 감사 로그(공유, 영구 삭제, 템플릿 관리, 비밀번호 변경 등)
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id SERIAL PRIMARY KEY,
+      actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      action TEXT NOT NULL,
+      detail TEXT,
+      at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    -- 최근 N시간 토큰 사용량 집계(개인/조직 전체 한도 표시, 관리자 사용량 추이)가 매 메시지마다
+    -- turns 전체를 훑지 않도록 role+at에 인덱스를 둔다.
+    CREATE INDEX IF NOT EXISTS idx_turns_role_at ON turns (role, at) WHERE role = 'model';
   `);
 }
 const ready = init().catch((err) => {
@@ -579,6 +590,28 @@ async function getMyUsage(userId) {
   return { conversationCount: rows[0].conversation_count, totalTokens: Number(rows[0].total_tokens) };
 }
 
+// 무료 Gemini 할당량을 조직 전체가 하나의 키로 공유하기 때문에, 한 명이 몰아 쓰면 나머지 팀원이
+// 다 같이 막힌다. 최근 24시간 개인 사용량(하루 상한 체크용)과 조직 전체 사용량(사전 안내용)을 잰다.
+async function getRecentUserTokenUsage(userId, hours = 24) {
+  await ready;
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(t.tokens), 0)::bigint AS total_tokens
+     FROM turns t JOIN conversations c ON c.id = t.conversation_id
+     WHERE c.user_id = $1 AND t.role = 'model' AND t.at > now() - ($2 || ' hours')::interval`,
+    [userId, hours]
+  );
+  return Number(rows[0].total_tokens);
+}
+
+async function getRecentOrgTokenUsage(hours = 24) {
+  await ready;
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(tokens), 0)::bigint AS total_tokens FROM turns WHERE role = 'model' AND at > now() - ($1 || ' hours')::interval`,
+    [hours]
+  );
+  return Number(rows[0].total_tokens);
+}
+
 // 관리자용 사용량 요약: 유저별 대화 수와 누적 토큰 사용량.
 async function getUsageSummary() {
   await ready;
@@ -645,6 +678,28 @@ async function logAlert(level, message) {
 async function getRecentAlerts(limit = 20) {
   await ready;
   const { rows } = await pool.query('SELECT level, message, at FROM alerts ORDER BY at DESC LIMIT $1', [limit]);
+  return rows;
+}
+
+// ---- 감사 로그(공유/영구삭제/템플릿 관리/비밀번호 변경처럼 민감하거나 되돌리기 어려운 조작) ----
+
+async function logAudit(actorUserId, action, detail) {
+  await ready;
+  await pool.query('INSERT INTO audit_log (actor_user_id, action, detail) VALUES ($1, $2, $3)', [
+    actorUserId || null,
+    action,
+    detail || null,
+  ]);
+}
+
+async function getRecentAuditLog(limit = 50) {
+  await ready;
+  const { rows } = await pool.query(
+    `SELECT a.action, a.detail, a.at, u.email AS actor_email
+     FROM audit_log a LEFT JOIN users u ON u.id = a.actor_user_id
+     ORDER BY a.at DESC LIMIT $1`,
+    [limit]
+  );
   return rows;
 }
 
@@ -818,4 +873,8 @@ module.exports = {
   createPromptTemplate,
   deletePromptTemplate,
   getMyUsage,
+  getRecentUserTokenUsage,
+  getRecentOrgTokenUsage,
+  logAudit,
+  getRecentAuditLog,
 };

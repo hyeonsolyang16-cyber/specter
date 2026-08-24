@@ -20,6 +20,7 @@ const micBtn = document.getElementById('mic-btn');
 const modeSelect = document.getElementById('mode-select');
 const trashToggleBtn = document.getElementById('trash-toggle-btn');
 const exportBtn = document.getElementById('export-btn');
+const exportMenu = document.getElementById('export-menu');
 const usageDisplay = document.getElementById('usage-display');
 const sharedToggleBtn = document.getElementById('shared-toggle-btn');
 const chatHeaderTitle = document.getElementById('chat-header-title');
@@ -112,14 +113,16 @@ memorySaveBtn.addEventListener('click', async () => {
   setTimeout(() => (memorySuccess.textContent = ''), 2000);
 });
 
-exportBtn.addEventListener('click', async () => {
-  if (!currentConversationId) return;
-  const res = await fetch(`/api/conversations/${currentConversationId}`);
-  if (!res.ok) return;
-  const conversation = await res.json();
+function safeFilename(title) {
+  return title.replace(/[\\/:*?"<>|]/g, '_');
+}
+
+const EXPORT_ROLE_LABEL = { user: '사용자', model: 'Specter' };
+
+async function exportAsMarkdown(conversation) {
   const lines = [`# ${conversation.title}`, ''];
   for (const t of conversation.turns) {
-    lines.push(t.role === 'user' ? '## 사용자' : '## Specter');
+    lines.push(`## ${EXPORT_ROLE_LABEL[t.role] || t.role}`);
     lines.push('');
     lines.push(t.content || '');
     lines.push('');
@@ -128,11 +131,98 @@ exportBtn.addEventListener('click', async () => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${conversation.title.replace(/[\\/:*?"<>|]/g, '_')}.md`;
+  a.download = `${safeFilename(conversation.title)}.md`;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+async function exportAsDocx(conversation) {
+  const res = await fetch(`/api/conversations/${conversation.id}/export/docx`);
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${safeFilename(conversation.title)}.docx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// 별도 서버 PDF 라이브러리 없이, 브라우저 자체 인쇄 기능(다른 이름으로 저장 → PDF)을 이용한다.
+// pdfkit 같은 라이브러리의 기본 폰트는 한글을 지원하지 않아 직접 폰트를 심어야 하는데,
+// 브라우저 인쇄는 이미 화면에 쓰는 폰트를 그대로 써서 한글 문제가 아예 없다.
+function exportAsPdf(conversation) {
+  const win = window.open('', '_blank');
+  if (!win) {
+    alert('팝업이 차단되었습니다. 브라우저의 팝업 차단을 해제한 뒤 다시 시도해주세요.');
+    return;
+  }
+  const esc = (s) =>
+    String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const body = conversation.turns
+    .map(
+      (t) =>
+        `<div class="turn"><div class="role">${EXPORT_ROLE_LABEL[t.role] || t.role}</div><div class="content">${esc(
+          t.content || ''
+        )}</div></div>`
+    )
+    .join('\n');
+  win.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
+    <title>${esc(conversation.title)}</title>
+    <style>
+      body { font-family: -apple-system, "Malgun Gothic", sans-serif; padding: 32px; color: #222; white-space: pre-wrap; }
+      h1 { font-size: 20px; margin-bottom: 24px; }
+      .turn { margin-bottom: 18px; }
+      .role { font-weight: 700; font-size: 12px; color: #588157; margin-bottom: 4px; }
+      .content { font-size: 13.5px; line-height: 1.6; }
+    </style>
+    </head><body><h1>${esc(conversation.title)}</h1>${body}</body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 300);
+}
+
+exportBtn.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  if (!currentConversationId) return;
+  if (!exportMenu.hidden) {
+    exportMenu.hidden = true;
+    return;
+  }
+  const res = await fetch(`/api/conversations/${currentConversationId}`);
+  if (!res.ok) return;
+  const conversation = await res.json();
+
+  exportMenu.innerHTML = '';
+  const options = [
+    ['마크다운(.md)', () => exportAsMarkdown(conversation)],
+    ['Word(.docx)', () => exportAsDocx(conversation)],
+    ['PDF (인쇄 대화상자)', () => exportAsPdf(conversation)],
+  ];
+  for (const [label, handler] of options) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'template-menu-item';
+    btn.textContent = label;
+    btn.addEventListener('click', () => {
+      handler();
+      exportMenu.hidden = true;
+    });
+    exportMenu.appendChild(btn);
+  }
+  const rect = exportBtn.getBoundingClientRect();
+  exportMenu.style.left = `${Math.max(8, rect.left)}px`;
+  exportMenu.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+  exportMenu.hidden = false;
+});
+document.addEventListener('click', (e) => {
+  if (!exportMenu.hidden && !exportMenu.contains(e.target) && e.target !== exportBtn) {
+    exportMenu.hidden = true;
+  }
 });
 let showingTrash = false;
 let showingShared = false;
@@ -290,6 +380,13 @@ modeSelect.addEventListener('change', () => {
 // 키보드 단축키: 입력 중이 아닐 때만 동작해서 일반 타이핑을 방해하지 않는다.
 // Ctrl/Cmd+K는 입력 중이어도 항상 동작한다(브라우저 주소창 단축키와 같은 관례).
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (!projectModal.hidden) return void (projectModal.hidden = true);
+    if (!memoryModal.hidden) return void (memoryModal.hidden = true);
+    if (!templateMenu.hidden) return void (templateMenu.hidden = true);
+    if (!exportMenu.hidden) return void (exportMenu.hidden = true);
+    return;
+  }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault();
     searchInput.focus();
@@ -527,6 +624,111 @@ installBtn.addEventListener('click', async () => {
   }
 });
 
+// GFM 스타일 파이프 표(| a | b |\n| --- | --- |\n| c | d |)만 <table>로 바꾸고, 나머지는
+// 원래대로 평문(줄바꿈만 유지)으로 둔다. 볼드 등 다른 마크다운은 시스템 프롬프트에서 계속 금지한다.
+// 셀 내용은 모두 textContent로만 넣어 innerHTML을 쓰지 않으므로 XSS 위험이 없다.
+function isTableSeparatorRow(line) {
+  return /^\s*\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$/.test(line);
+}
+function splitTableRow(line) {
+  let cells = line.trim();
+  if (cells.startsWith('|')) cells = cells.slice(1);
+  if (cells.endsWith('|')) cells = cells.slice(0, -1);
+  return cells.split('|').map((c) => c.trim());
+}
+function buildTableElement(tableLines) {
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-table-wrap';
+  const table = document.createElement('table');
+  table.className = 'msg-table';
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  for (const c of splitTableRow(tableLines[0])) {
+    const th = document.createElement('th');
+    th.textContent = c;
+    headRow.appendChild(th);
+  }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  for (let i = 2; i < tableLines.length; i++) {
+    const row = document.createElement('tr');
+    for (const c of splitTableRow(tableLines[i])) {
+      const td = document.createElement('td');
+      td.textContent = c;
+      row.appendChild(td);
+    }
+    tbody.appendChild(row);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+// allowTables는 Specter 응답에만 켠다 — 시스템 프롬프트도 표 문법을 Specter에게만 허용하고,
+// 사용자가 입력한 텍스트(터미널 출력, URL 등 파이프가 우연히 들어간 경우)까지 표로 잘못
+// 재구성되면 사용자가 실제로 입력한 내용과 화면이 달라져 혼란을 줄 수 있다.
+function renderMessageBody(body, text, allowTables = true) {
+  body.dataset.rawText = text;
+  body.innerHTML = '';
+  if (!allowTables) {
+    body.textContent = text;
+    return;
+  }
+  const lines = text.split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    if (lines[i].includes('|') && i + 1 < lines.length && isTableSeparatorRow(lines[i + 1])) {
+      const tableLines = [lines[i], lines[i + 1]];
+      let j = i + 2;
+      while (j < lines.length && lines[j].includes('|') && lines[j].trim() !== '') {
+        tableLines.push(lines[j]);
+        j++;
+      }
+      body.appendChild(buildTableElement(tableLines));
+      i = j;
+    } else {
+      let j = i;
+      const plain = [];
+      while (j < lines.length && !(lines[j].includes('|') && j + 1 < lines.length && isTableSeparatorRow(lines[j + 1]))) {
+        plain.push(lines[j]);
+        j++;
+      }
+      if (plain.some((l) => l !== '')) {
+        const span = document.createElement('span');
+        span.textContent = plain.join('\n');
+        body.appendChild(span);
+      }
+      i = j;
+    }
+  }
+}
+
+function base64ToBlob(base64, mimeType) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mimeType });
+}
+
+// PDF는 새 탭에서 바로 열어 보여주고, 브라우저가 못 읽는 형식(Excel/Word 등)은 원본 파일을 내려받게 한다.
+function openOrDownloadAttachment(a) {
+  const blob = base64ToBlob(a.data, a.mimeType);
+  const url = URL.createObjectURL(blob);
+  if (a.mimeType === 'application/pdf') {
+    const win = window.open(url, '_blank');
+    if (!win) alert('팝업이 차단되었습니다. 브라우저의 팝업 차단을 해제한 뒤 다시 시도해주세요.');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } else {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = a.name || '첨부파일';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+}
+
 function addMessage(role, text, opts = {}) {
   const el = document.createElement('div');
   el.className = `msg ${role}${opts.error ? ' error' : ''}`;
@@ -538,7 +740,7 @@ function addMessage(role, text, opts = {}) {
   }
   const body = document.createElement('span');
   body.className = 'msg-body';
-  body.textContent = text;
+  renderMessageBody(body, text, role === 'specter');
   el.appendChild(body);
 
   if (Array.isArray(opts.attachments)) {
@@ -549,9 +751,20 @@ function addMessage(role, text, opts = {}) {
         img.src = `data:${a.mimeType};base64,${a.data}`;
         img.alt = '첨부 이미지';
         el.appendChild(img);
-      } else {
-        const fileChip = document.createElement('span');
+      } else if (a.data) {
+        const isPdf = a.mimeType === 'application/pdf';
+        const fileChip = document.createElement('button');
+        fileChip.type = 'button';
         fileChip.className = 'msg-file-chip';
+        fileChip.textContent = `📄 ${a.name || '문서'}${isPdf ? '' : ' ⬇'}`;
+        fileChip.title = isPdf ? '새 탭에서 열기' : '다운로드';
+        fileChip.addEventListener('click', () => openOrDownloadAttachment(a));
+        el.appendChild(fileChip);
+      } else {
+        // 지식 베이스 등 원본 바이트가 없는 경우(예: 이미 텍스트로 추출된 첨부)는 이름만 보여준다.
+        // 클릭해도 아무 반응이 없으므로 클릭 가능한 것처럼 보이는 hover/cursor 스타일은 주지 않는다.
+        const fileChip = document.createElement('span');
+        fileChip.className = 'msg-file-chip msg-file-chip-static';
         fileChip.textContent = `📄 ${a.name || '문서'}`;
         el.appendChild(fileChip);
       }
@@ -601,7 +814,7 @@ function decorateSpecterMessage(el, body, readOnly) {
     copyBtn.title = '복사';
     copyBtn.textContent = '⧉';
     copyBtn.addEventListener('click', async () => {
-      await navigator.clipboard.writeText(body.textContent);
+      await navigator.clipboard.writeText(body.dataset.rawText ?? body.textContent);
       copyBtn.textContent = '✓';
       setTimeout(() => (copyBtn.textContent = '⧉'), 1200);
     });
@@ -613,7 +826,7 @@ function decorateSpecterMessage(el, body, readOnly) {
     speakBtn.title = '읽어주기';
     speakBtn.textContent = '🔊';
     speakBtn.dataset.speaking = 'false';
-    speakBtn.addEventListener('click', () => speakText(body.textContent, speakBtn));
+    speakBtn.addEventListener('click', () => speakText(body.dataset.rawText ?? body.textContent, speakBtn));
     el.appendChild(speakBtn);
   }
 }
@@ -916,6 +1129,7 @@ async function regenerateFrom(msgEl) {
   setGenerating(true);
   const pending = addPendingMessage();
   activeAbortController = new AbortController();
+  const draftText = input.value; // 실패해도(예: 일일 한도 초과) 입력 중이던 초안은 그대로 둔다
 
   let res;
   try {
@@ -931,9 +1145,11 @@ async function regenerateFrom(msgEl) {
     setGenerating(false);
     return;
   }
-  if (isLast) msgEl.remove();
-  await handleChatResponse(res, pending, '');
-  if (isLast) attachLatestBranchNav(pending);
+  // 429 등으로 요청이 거부된 경우(res.ok===false)는 서버가 이전 답변을 그대로 보존하므로
+  // 화면에서도 지우지 않는다 — 성공해서 진짜로 브랜치 처리된 경우에만 이전 답변을 치운다.
+  if (isLast && res.ok) msgEl.remove();
+  await handleChatResponse(res, pending, draftText);
+  if (isLast && res.ok) attachLatestBranchNav(pending);
 }
 
 // 재생성 직후 마지막 턴에 브랜치가 생겼는지 서버에서 다시 확인해 네비게이터를 붙인다.
@@ -988,7 +1204,7 @@ async function switchBranch(msgEl, branchGroup, branches, newIdx) {
     body: JSON.stringify({ turnId: target.id }),
   });
   const body = msgEl.querySelector('.msg-body');
-  body.textContent = target.content;
+  renderMessageBody(body, target.content);
   const updated = branches.map((b, i) => ({ ...b, isActive: i === newIdx }));
   renderBranchNav(msgEl, branchGroup, updated);
 }
@@ -1000,6 +1216,16 @@ async function handleChatResponse(res, pending, restoreText) {
     if (res.status === 401) return void (location.href = '/login.html');
     if (data.kind === 'rate_limit') {
       const el = addMessage('specter', '', { error: true });
+      if (data.daily) {
+        // 일일 할당량은 초 단위로 카운트다운해봐야 다시 시도해도 또 실패한다 — 대신 그대로 안내만 하고
+        // 입력창에 메시지를 복원해 나중에 다시 보낼 수 있게 한다.
+        el.querySelector('.msg-body').textContent = data.error;
+        setComposerDisabled(false);
+        input.value = restoreText;
+        input.dispatchEvent(new Event('input'));
+        setGenerating(false);
+        return;
+      }
       startRateLimitCountdown(el, data.retryAfterSeconds || 30, restoreText);
       setGenerating(false);
       return;
@@ -1028,7 +1254,10 @@ async function handleChatResponse(res, pending, restoreText) {
   pending.classList.remove('pending');
   const body = pending.querySelector('.msg-body');
   if (!body.textContent) pending.remove();
-  else decorateSpecterMessage(pending, body);
+  else {
+    renderMessageBody(body, body.textContent); // 스트리밍 중엔 평문으로만 쌓다가, 끝나면 표를 한 번에 파싱해 렌더링
+    decorateSpecterMessage(pending, body);
+  }
 
   activeAbortController = null;
   setGenerating(false);
@@ -1298,7 +1527,13 @@ async function loadUsage() {
   const res = await fetch('/api/usage/me');
   if (!res.ok) return;
   const usage = await res.json();
-  usageDisplay.textContent = `누적 토큰 사용량: ${usage.totalTokens.toLocaleString('ko-KR')}`;
+  const ko = (n) => n.toLocaleString('ko-KR');
+  let text = `누적 토큰 사용량: ${ko(usage.totalTokens)} · 최근 24시간 조직 전체: ${ko(usage.recentOrgTokens)}`;
+  if (usage.dailyCap !== null && usage.dailyCap !== undefined) {
+    text += ` (개인 한도 ${ko(usage.recentUserTokens)}/${ko(usage.dailyCap)})`;
+  }
+  usageDisplay.textContent = text;
+  usageDisplay.title = 'Gemini 무료 할당량은 조직 전체가 하나의 계정으로 공유합니다.';
 }
 
 async function createNewProject() {

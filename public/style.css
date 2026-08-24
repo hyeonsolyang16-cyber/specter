@@ -900,7 +900,18 @@ html, body {
   background: var(--surface-2);
   border: 1px solid var(--border);
   font-size: 12.5px;
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
 }
+.msg-file-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
+.msg-file-chip-static { cursor: default; }
+.msg-file-chip-static:hover { border-color: var(--border); background: var(--surface-2); }
+
+.msg-table-wrap { overflow-x: auto; margin: 8px 0; max-width: 100%; }
+.msg-table { border-collapse: collapse; white-space: normal; font-size: 13px; }
+.msg-table th, .msg-table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+.msg-table th { background: var(--surface-2); font-weight: 600; }
 
 /* 모바일 */
 

@@ -160,13 +160,47 @@ function renderAlerts(alerts) {
   return section;
 }
 
+const AUDIT_ACTION_LABELS = {
+  password_changed: '비밀번호 변경',
+  conversation_shared: '프로젝트 공유',
+  conversation_unshared: '프로젝트 공유 해제',
+  conversation_permanently_deleted: '프로젝트 영구 삭제',
+  template_created: '템플릿 생성',
+  template_deleted: '템플릿 삭제',
+};
+
+function renderAuditLog(entries) {
+  const section = el('section', 'admin-user');
+  const header = el('div', 'admin-user-header');
+  header.appendChild(el('strong', null, '감사 로그'));
+  header.appendChild(el('span', null, '공유·영구 삭제·템플릿 관리·비밀번호 변경처럼 민감하거나 되돌리기 어려운 조작 기록입니다'));
+  section.appendChild(header);
+
+  if (entries.length === 0) {
+    section.appendChild(el('p', 'admin-empty', '아직 기록이 없습니다.'));
+    return section;
+  }
+
+  const list = el('div', 'admin-turns');
+  for (const a of entries) {
+    const item = el('div', 'admin-turn user');
+    const label = AUDIT_ACTION_LABELS[a.action] || a.action;
+    item.appendChild(el('span', 'admin-turn-meta', `${a.actor_email || '(알 수 없음)'} · ${label} · ${formatTime(a.at)}`));
+    if (a.detail) item.appendChild(el('div', 'admin-turn-body', a.detail));
+    list.appendChild(item);
+  }
+  section.appendChild(list);
+  return section;
+}
+
 async function load() {
-  const [convRes, usageRes, alertsRes, trendRes, templatesRes] = await Promise.all([
+  const [convRes, usageRes, alertsRes, trendRes, templatesRes, auditRes] = await Promise.all([
     fetch('/api/admin/conversations'),
     fetch('/api/admin/usage'),
     fetch('/api/admin/alerts'),
     fetch('/api/admin/usage-trend'),
     fetch('/api/templates'),
+    fetch('/api/admin/audit-log'),
   ]);
   if (convRes.status === 401) return (location.href = '/login.html');
   if (convRes.status === 403) return (location.href = '/');
@@ -175,6 +209,7 @@ async function load() {
   const alerts = alertsRes.ok ? await alertsRes.json() : [];
   const trend = trendRes.ok ? await trendRes.json() : [];
   const templates = templatesRes.ok ? await templatesRes.json() : [];
+  const audit = auditRes.ok ? await auditRes.json() : [];
 
   content.innerHTML = '';
   const alertsSection = renderAlerts(alerts);
@@ -182,6 +217,7 @@ async function load() {
   content.appendChild(renderTemplates(templates));
   content.appendChild(renderUsageTrend(trend));
   content.appendChild(renderUsageTable(usage));
+  content.appendChild(renderAuditLog(audit));
 
   if (users.length === 0) {
     content.appendChild(el('p', 'admin-empty', '아직 가입한 사용자가 없습니다.'));

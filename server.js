@@ -10,6 +10,7 @@ const { GoogleGenAI, ApiError } = require('@google/genai');
 const { buildSystemPrompt, PERSONA_PROMPTS, PERSONA_LABELS } = require('./system-prompt');
 const XLSX = require('xlsx');
 const mammoth = require('mammoth');
+const { Document, Packer, Paragraph, HeadingLevel, TextRun } = require('docx');
 const store = require('./store');
 
 // Express 4는 async 라우트 핸들러 안에서 처리 안 된 에러(unhandled rejection)를 자동으로
@@ -445,6 +446,7 @@ app.post('/api/account/password', requireAuth, async (req, res) => {
   }
   const newHash = await bcrypt.hash(newPassword, 10);
   await store.updatePasswordHash(user.id, newHash);
+  store.logAudit(user.id, 'password_changed', user.email).catch((err) => console.error('감사 로그 기록 실패:', err.message));
   res.json({ ok: true });
 });
 
@@ -745,6 +747,10 @@ app.get('/api/admin/alerts', requireAdmin, async (req, res) => {
   res.json(await store.getRecentAlerts(30));
 });
 
+app.get('/api/admin/audit-log', requireAdmin, async (req, res) => {
+  res.json(await store.getRecentAuditLog(50));
+});
+
 app.post('/api/conversations', requireAuth, async (req, res) => {
   const { category } = req.body || {};
   const conversation = await store.createConversation(req.session.userId, category);
@@ -774,6 +780,7 @@ app.post('/api/trash/:id/restore', requireAuth, async (req, res) => {
 app.delete('/api/trash/:id', requireAuth, async (req, res) => {
   const deleted = await store.permanentlyDeleteConversation(req.session.userId, req.params.id);
   if (!deleted) return res.status(404).json({ error: '휴지통에서 찾을 수 없습니다.' });
+  store.logAudit(req.session.userId, 'conversation_permanently_deleted', req.params.id).catch((err) => console.error('감사 로그 기록 실패:', err.message));
   res.json({ ok: true });
 });
 
@@ -784,6 +791,40 @@ app.get('/api/conversations/:id', requireAuth, async (req, res) => {
   const shared = await store.getSharedConversation(req.session.userId, req.params.id);
   if (!shared) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
   res.json({ ...shared, readOnly: true });
+});
+
+async function getExportableConversation(userId, conversationId) {
+  const owned = await store.getConversation(userId, conversationId);
+  if (owned) return owned;
+  return store.getSharedConversation(userId, conversationId);
+}
+
+const EXPORT_ROLE_LABEL = { user: '사용자', model: 'Specter' };
+
+// Word(.docx)는 클라이언트 프로그램이 열 때 문자에 맞는 폰트로 자동 대체하므로 한글이 별도
+// 폰트 임베딩 없이도 정상적으로 보인다. PDF는 pdfkit의 기본 14개 폰트가 라틴 문자 전용이라
+// 한글 임베딩용 폰트 파일을 따로 번들해야 해서, PDF는 대신 브라우저 인쇄 기능으로 처리한다
+// (아래 /api/conversations/:id/export 는 markdown/docx만 서버에서 만든다).
+app.get('/api/conversations/:id/export/docx', requireAuth, async (req, res) => {
+  const conversation = await getExportableConversation(req.session.userId, req.params.id);
+  if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+
+  const children = [new Paragraph({ text: conversation.title, heading: HeadingLevel.HEADING_1 })];
+  for (const t of conversation.turns) {
+    children.push(new Paragraph({ text: EXPORT_ROLE_LABEL[t.role] || t.role, heading: HeadingLevel.HEADING_2 }));
+    const lines = (t.content || '').split('\n');
+    for (const line of lines) {
+      children.push(new Paragraph({ children: [new TextRun(line)] }));
+    }
+  }
+  const doc = new Document({ sections: [{ children }] });
+  const buffer = await Packer.toBuffer(doc);
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  );
+  res.setHeader('Content-Disposition', 'attachment; filename="specter-export.docx"');
+  res.send(buffer);
 });
 
 app.patch('/api/conversations/:id/category', requireAuth, async (req, res) => {
@@ -879,8 +920,10 @@ app.delete('/api/conversations/:id/knowledge/:fileId', requireAuth, async (req, 
 app.post('/api/conversations/:id/share', requireAuth, async (req, res) => {
   const { email } = req.body || {};
   if (!email || typeof email !== 'string') return res.status(400).json({ error: 'email이 필요합니다.' });
-  const result = await store.shareConversation(req.session.userId, req.params.id, email.trim().toLowerCase());
+  const target = email.trim().toLowerCase();
+  const result = await store.shareConversation(req.session.userId, req.params.id, target);
   if (result.error) return res.status(400).json({ error: result.error });
+  store.logAudit(req.session.userId, 'conversation_shared', `${req.params.id} -> ${target}`).catch((err) => console.error('감사 로그 기록 실패:', err.message));
   res.json(result);
 });
 
@@ -893,6 +936,7 @@ app.get('/api/conversations/:id/shares', requireAuth, async (req, res) => {
 app.delete('/api/conversations/:id/share/:userId', requireAuth, async (req, res) => {
   const ok = await store.unshareConversation(req.session.userId, req.params.id, req.params.userId);
   if (!ok) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  store.logAudit(req.session.userId, 'conversation_unshared', `${req.params.id} -> ${req.params.userId}`).catch((err) => console.error('감사 로그 기록 실패:', err.message));
   res.json({ ok: true });
 });
 
@@ -912,19 +956,26 @@ app.post('/api/admin/templates', requireAuth, requireAdmin, async (req, res) => 
     return res.status(400).json({ error: 'title과 content가 필요합니다.' });
   }
   const template = await store.createPromptTemplate(req.session.userId, title.trim().slice(0, 100), content.trim().slice(0, 4000));
+  store.logAudit(req.session.userId, 'template_created', template.title).catch((err) => console.error('감사 로그 기록 실패:', err.message));
   res.json(template);
 });
 
 app.delete('/api/admin/templates/:id', requireAuth, requireAdmin, async (req, res) => {
   const ok = await store.deletePromptTemplate(req.params.id);
   if (!ok) return res.status(404).json({ error: '템플릿을 찾을 수 없습니다.' });
+  store.logAudit(req.session.userId, 'template_deleted', String(req.params.id)).catch((err) => console.error('감사 로그 기록 실패:', err.message));
   res.json({ ok: true });
 });
 
 // ---- 본인 사용량 ----
 
 app.get('/api/usage/me', requireAuth, async (req, res) => {
-  res.json(await store.getMyUsage(req.session.userId));
+  const [mine, recentUser, recentOrg] = await Promise.all([
+    store.getMyUsage(req.session.userId),
+    store.getRecentUserTokenUsage(req.session.userId, 24),
+    store.getRecentOrgTokenUsage(24),
+  ]);
+  res.json({ ...mine, recentUserTokens: recentUser, recentOrgTokens: recentOrg, dailyCap: DAILY_TOKEN_CAP_PER_USER });
 });
 
 app.delete('/api/conversations/:id', requireAuth, async (req, res) => {
@@ -956,6 +1007,24 @@ function toGeminiContents(turns) {
     }
     return { role: t.role, parts };
   });
+}
+
+// 조직 전체가 Gemini 무료 할당량을 키 하나로 공유하기 때문에, 한 사람이 몰아 쓰면 나머지
+// 팀원 전체가 막힌다. DAILY_TOKEN_CAP_PER_USER(선택, 미설정 시 제한 없음)로 최근 24시간 개인
+// 사용량에 소프트 캡을 둬서 최소한 한 사람이 전체 할당량을 다 써버리는 것은 막는다.
+// "0"으로 완전히 차단하고 싶을 수도 있으므로 falsy(0) 체크가 아니라 undefined/빈 문자열/NaN만 걸러낸다.
+const DAILY_TOKEN_CAP_PER_USER =
+  process.env.DAILY_TOKEN_CAP_PER_USER !== undefined && process.env.DAILY_TOKEN_CAP_PER_USER !== ''
+    ? parseInt(process.env.DAILY_TOKEN_CAP_PER_USER, 10)
+    : null;
+
+async function checkDailyCap(userId) {
+  if (DAILY_TOKEN_CAP_PER_USER === null || Number.isNaN(DAILY_TOKEN_CAP_PER_USER)) return null;
+  const used = await store.getRecentUserTokenUsage(userId, 24);
+  if (used >= DAILY_TOKEN_CAP_PER_USER) {
+    return '최근 24시간 개인 사용량 한도에 도달했습니다. 무료 할당량을 팀 전체가 함께 쓰고 있어 한 사람이 다 쓰지 않도록 두는 제한입니다. 시간이 지나면 다시 사용할 수 있습니다.';
+  }
+  return null;
 }
 
 // 기본 시스템 프롬프트 + 프로젝트별 페르소나/커스텀 지침 + 현재 시각(검색 결과의 날짜 판단에 필요) +
@@ -1014,15 +1083,49 @@ async function extractOfficeAttachments(attachments) {
   return result;
 }
 
+// 스트리밍 도중 에러가 나면 @google/genai SDK가 err.message 앞에 "got status: X. "를 붙여서
+// 순수 JSON이 아니게 만든다(최초 HTTP 응답 자체가 실패할 때만 순수 JSON). 첫 '{' 이후부터
+// 파싱하면 두 경우 모두 처리된다.
+function parseGeminiErrorJson(err) {
+  const start = err.message.indexOf('{');
+  if (start === -1) throw new Error('에러 메시지에 JSON이 없습니다.');
+  return JSON.parse(err.message.slice(start));
+}
+
 // Gemini는 잘못된 키를 401이 아니라 400(INVALID_ARGUMENT)으로 반환하고,
 // 세부 사유는 message에 담긴 raw JSON 안의 details[].reason에 들어있다.
 function isInvalidApiKey(err) {
   try {
-    const parsed = JSON.parse(err.message);
+    const parsed = parseGeminiErrorJson(err);
     return parsed?.error?.details?.some((d) => d.reason === 'API_KEY_INVALID');
   } catch {
     return false;
   }
+}
+
+// 429 응답의 세부 정보(QuotaFailure의 quotaId, RetryInfo의 retryDelay)를 읽어 분당 제한인지
+// 일일 제한인지 구분한다. 일일 제한은 몇 초 뒤 재시도해봐야 또 실패하므로 안내 문구를 다르게 한다.
+// 구조를 못 읽으면 안전하게 "분당 제한, 30초 후 재시도"로 취급한다.
+function parseQuotaError(err) {
+  try {
+    const parsed = parseGeminiErrorJson(err);
+    const details = parsed?.error?.details || [];
+    const quotaId = details.find((d) => d['@type']?.includes('QuotaFailure'))?.violations?.[0]?.quotaId || '';
+    const retryDelay = details.find((d) => d['@type']?.includes('RetryInfo'))?.retryDelay || '';
+    const retryMatch = /^(\d+)s$/.exec(retryDelay);
+    return {
+      isDaily: /day/i.test(quotaId),
+      retryAfterSeconds: retryMatch ? parseInt(retryMatch[1], 10) : 30,
+    };
+  } catch {
+    return { isDaily: false, retryAfterSeconds: 30 };
+  }
+}
+
+// checkDailyCap과 streamAndRespond의 catch 블록 양쪽에서 "일일 한도 초과" 429 응답을 조립하므로,
+// 응답 형태가 두 곳에서 따로 드리프트하지 않도록 한 곳에 모아둔다.
+function dailyQuotaResponse(message) {
+  return { kind: 'rate_limit', daily: true, error: message };
 }
 
 // 스트리밍 생성 + 전송을 공통 처리한다. onComplete은 실제로 텍스트가 생성된
@@ -1109,11 +1212,19 @@ async function streamAndRespond(req, res, contents, systemPrompt, mode, onComple
       return;
     }
     if (err instanceof ApiError && err.status === 429) {
-      // 무료 티어 할당량(분당/일일)은 시간이 지나면 자동으로 초기화된다.
+      const quota = parseQuotaError(err);
+      if (quota.isDaily) {
+        // 일일 한도는 몇 초 뒤 재시도해도 다시 실패한다 — 카운트다운 대신 정직하게 안내한다.
+        return res.status(429).json(
+          dailyQuotaResponse(
+            '오늘 무료 사용량 한도에 도달했습니다. 이 한도는 조직 전체가 하나의 계정으로 공유하고 있어 다른 팀원의 사용량에도 영향을 받습니다. 하루 단위로 초기화되니 몇 시간 뒤 다시 시도해주세요.'
+          )
+        );
+      }
       return res.status(429).json({
         kind: 'rate_limit',
-        retryAfterSeconds: 30,
-        error: '무료 사용량 한도에 도달했습니다. 잠시 후 자동으로 초기화됩니다.',
+        retryAfterSeconds: quota.retryAfterSeconds,
+        error: '요청이 몰려 잠시 제한되었습니다. 곧 자동으로 다시 시도할 수 있습니다.',
       });
     }
     if (err instanceof ApiError && err.status === 400 && isInvalidApiKey(err)) {
@@ -1168,6 +1279,8 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   if (!conversation) {
     return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
   }
+  const capError = await checkDailyCap(req.session.userId);
+  if (capError) return res.status(429).json(dailyQuotaResponse(capError));
   // 저장은 원본 첨부(엑셀/워드 원본 등)로 하고, Gemini에 보낼 때만 추출된 텍스트로 바꾼다.
   const attachments = await extractOfficeAttachments(rawAttachments);
 
@@ -1209,6 +1322,8 @@ app.post('/api/chat/regenerate', requireAuth, async (req, res) => {
   if (!conversationId) return res.status(400).json({ error: 'conversationId가 필요합니다.' });
   const conversation = await store.getConversation(req.session.userId, conversationId);
   if (!conversation) return res.status(404).json({ error: '프로젝트를 찾을 수 없습니다.' });
+  const capError = await checkDailyCap(req.session.userId);
+  if (capError) return res.status(429).json(dailyQuotaResponse(capError));
 
   const lastTurn = conversation.turns[conversation.turns.length - 1];
   let branchGroup = null;
