@@ -21,6 +21,8 @@ const modeSelect = document.getElementById('mode-select');
 const trashToggleBtn = document.getElementById('trash-toggle-btn');
 const exportBtn = document.getElementById('export-btn');
 const exportMenu = document.getElementById('export-menu');
+const moreMenuBtn = document.getElementById('more-menu-btn');
+const moreMenu = document.getElementById('more-menu');
 const usageDisplay = document.getElementById('usage-display');
 const sharedToggleBtn = document.getElementById('shared-toggle-btn');
 const chatHeaderTitle = document.getElementById('chat-header-title');
@@ -224,6 +226,29 @@ document.addEventListener('click', (e) => {
     exportMenu.hidden = true;
   }
 });
+
+// 사이드바 하단에 텍스트 링크가 너무 많이 늘어서(설정/관리자/내보내기/공유받음/휴지통/로그아웃)
+// 자주 안 쓰는 것들은 "더보기" 메뉴 뒤로 몰아둔다.
+moreMenuBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!moreMenu.hidden) {
+    moreMenu.hidden = true;
+    return;
+  }
+  const rect = moreMenuBtn.getBoundingClientRect();
+  moreMenu.style.left = `${Math.max(8, rect.left)}px`;
+  moreMenu.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+  moreMenu.hidden = false;
+});
+document.addEventListener('click', (e) => {
+  if (!moreMenu.hidden && !moreMenu.contains(e.target) && e.target !== moreMenuBtn) {
+    moreMenu.hidden = true;
+  }
+});
+moreMenu.addEventListener('click', (e) => {
+  if (e.target.closest('.template-menu-item')) moreMenu.hidden = true;
+});
+
 let showingTrash = false;
 let showingShared = false;
 
@@ -385,6 +410,7 @@ document.addEventListener('keydown', (e) => {
     if (!memoryModal.hidden) return void (memoryModal.hidden = true);
     if (!templateMenu.hidden) return void (templateMenu.hidden = true);
     if (!exportMenu.hidden) return void (exportMenu.hidden = true);
+    if (!moreMenu.hidden) return void (moreMenu.hidden = true);
     return;
   }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {

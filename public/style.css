@@ -1147,7 +1147,10 @@ html, body {
   padding: 8px 10px;
   border-radius: 6px;
   cursor: pointer;
+  text-decoration: none;
+  box-sizing: border-box;
 }
+.template-menu-item[hidden] { display: none; }
 .template-menu-item:hover { background: var(--accent-soft); }
 .template-menu-empty { padding: 10px; font-size: 12px; color: var(--text-muted); }
 

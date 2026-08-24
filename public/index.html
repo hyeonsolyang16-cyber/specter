@@ -52,18 +52,20 @@
       <div class="sidebar-footer-links">
         <button type="button" id="theme-toggle-btn" class="logout-link"></button>
         <button type="button" id="memory-quick-btn" class="logout-link">메모리</button>
-        <a href="/settings.html" class="logout-link">설정</a>
-        <a href="/admin.html" id="admin-link" class="logout-link" hidden>관리자</a>
-      </div>
-      <div class="sidebar-footer-links">
-        <button id="export-btn" class="logout-link">내보내기</button>
-        <button id="shared-toggle-btn" class="logout-link">공유받음</button>
-        <button id="trash-toggle-btn" class="logout-link">휴지통</button>
-        <button id="logout-btn" class="logout-link">로그아웃</button>
+        <button type="button" id="more-menu-btn" class="logout-link">더보기</button>
       </div>
       <button id="install-btn" class="logout-link" hidden>앱으로 설치</button>
     </div>
   </aside>
+
+  <div id="more-menu" class="template-menu" hidden>
+    <a href="/settings.html" class="template-menu-item">설정</a>
+    <a href="/admin.html" id="admin-link" class="template-menu-item" hidden>관리자</a>
+    <button type="button" id="export-btn" class="template-menu-item">내보내기</button>
+    <button type="button" id="shared-toggle-btn" class="template-menu-item">공유받음</button>
+    <button type="button" id="trash-toggle-btn" class="template-menu-item">휴지통</button>
+    <button type="button" id="logout-btn" class="template-menu-item">로그아웃</button>
+  </div>
 
   <div class="app">
     <div class="mobile-topbar">
