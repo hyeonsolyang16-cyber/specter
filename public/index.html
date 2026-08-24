@@ -32,20 +32,30 @@
       새 프로젝트
     </button>
     <input id="search-input" class="search-input" type="search" placeholder="대화 검색">
-    <select id="mode-select" class="mode-select" title="성능 모드">
-      <option value="lite">Lite</option>
-      <option value="standard">Standard</option>
-      <option value="high">High</option>
-      <option value="max">Max</option>
-      <option value="auto">자동</option>
-    </select>
+    <div class="sidebar-quick-row">
+      <select id="mode-select" class="mode-select" title="성능 모드">
+        <option value="lite">Lite</option>
+        <option value="standard">Standard</option>
+        <option value="high">High</option>
+        <option value="max">Max</option>
+        <option value="auto">자동</option>
+      </select>
+      <div class="intensity-toggle" id="intensity-toggle" title="판단 강도">
+        <button type="button" data-value="mild">약하게</button>
+        <button type="button" data-value="strong">강하게</button>
+      </div>
+    </div>
     <nav id="project-list" class="project-list"></nav>
     <div class="sidebar-footer">
       <span id="user-email" class="user-email"></span>
       <span id="usage-display" class="usage-display"></span>
       <div class="sidebar-footer-links">
+        <button type="button" id="theme-toggle-btn" class="logout-link"></button>
+        <button type="button" id="memory-quick-btn" class="logout-link">메모리</button>
         <a href="/settings.html" class="logout-link">설정</a>
         <a href="/admin.html" id="admin-link" class="logout-link" hidden>관리자</a>
+      </div>
+      <div class="sidebar-footer-links">
         <button id="export-btn" class="logout-link">내보내기</button>
         <button id="shared-toggle-btn" class="logout-link">공유받음</button>
         <button id="trash-toggle-btn" class="logout-link">휴지통</button>
@@ -139,6 +149,27 @@
           <button type="button" id="share-btn" class="reset-btn">공유</button>
         </div>
         <div id="share-list" class="share-list"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div id="memory-modal" class="modal-overlay" hidden>
+  <div class="modal-panel">
+    <div class="modal-header">
+      <h2>메모리</h2>
+      <button type="button" id="memory-modal-close" class="modal-close" aria-label="닫기">✕</button>
+    </div>
+    <div class="modal-body">
+      <section class="modal-section">
+        <p class="settings-desc">여기 적어두면 모든 대화에서 항상 참고합니다. (최대 2000자, 추가 비용 없음)</p>
+        <textarea id="memory-input" rows="5" maxlength="2000" placeholder="예: 나는 스타트업 대표고, 항상 리스크와 실행 가능성 위주로 검토해줘"></textarea>
+        <label class="settings-checkbox">
+          <input type="checkbox" id="auto-memory-toggle">
+          자동 메모리 — 대화 중 기억할 만한 내용을 Specter가 스스로 판단해 추가합니다 (메시지마다 가벼운 API 호출이 하나 더 발생해 무료 사용량을 더 씁니다)
+        </label>
+        <button type="button" id="memory-save-btn" class="reset-btn">메모리 저장</button>
+        <span id="memory-success" class="settings-success"></span>
       </section>
     </div>
   </div>

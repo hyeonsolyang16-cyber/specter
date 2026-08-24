@@ -39,9 +39,78 @@ const shareBtn = document.getElementById('share-btn');
 const shareList = document.getElementById('share-list');
 const templateBtn = document.getElementById('template-btn');
 const templateMenu = document.getElementById('template-menu');
+const intensityToggle = document.getElementById('intensity-toggle');
+const themeToggleBtn = document.getElementById('theme-toggle-btn');
+const memoryQuickBtn = document.getElementById('memory-quick-btn');
+const memoryModal = document.getElementById('memory-modal');
+const memoryModalClose = document.getElementById('memory-modal-close');
+const memoryInput = document.getElementById('memory-input');
+const autoMemoryToggle = document.getElementById('auto-memory-toggle');
+const memorySaveBtn = document.getElementById('memory-save-btn');
+const memorySuccess = document.getElementById('memory-success');
 
 let isReadOnlyConversation = false;
 let personaOptionsCache = null;
+
+async function saveSetting(key, value) {
+  await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ [key]: value }),
+  });
+}
+
+function markActiveBtn(container, value) {
+  for (const btn of container.querySelectorAll('button')) {
+    btn.classList.toggle('active', btn.dataset.value === value);
+  }
+}
+
+intensityToggle.addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  markActiveBtn(intensityToggle, btn.dataset.value);
+  saveSetting('pushbackIntensity', btn.dataset.value);
+});
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  themeToggleBtn.textContent = theme === 'dark' ? '라이트 모드' : '다크 모드';
+}
+
+themeToggleBtn.addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme') || 'light';
+  const next = current === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+  saveSetting('theme', next);
+});
+
+const MAX_MEMORY_LENGTH = 2000;
+memoryQuickBtn.addEventListener('click', async () => {
+  const res = await fetch('/api/settings');
+  const settings = res.ok ? await res.json() : {};
+  memoryInput.value = settings.memory || '';
+  autoMemoryToggle.checked = !!settings.autoMemory;
+  memorySuccess.textContent = '';
+  memoryModal.hidden = false;
+});
+memoryModalClose.addEventListener('click', () => (memoryModal.hidden = true));
+memoryModal.addEventListener('click', (e) => {
+  if (e.target === memoryModal) memoryModal.hidden = true;
+});
+memorySaveBtn.addEventListener('click', async () => {
+  if (memoryInput.value.length > MAX_MEMORY_LENGTH) {
+    alert(`메모리는 ${MAX_MEMORY_LENGTH}자 이하로 입력하세요.`);
+    return;
+  }
+  await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ memory: memoryInput.value, autoMemory: autoMemoryToggle.checked }),
+  });
+  memorySuccess.textContent = '저장되었습니다.';
+  setTimeout(() => (memorySuccess.textContent = ''), 2000);
+});
 
 exportBtn.addEventListener('click', async () => {
   if (!currentConversationId) return;
@@ -787,8 +856,9 @@ function renderEmptyState() {
     tips.innerHTML = `
       <b>알아두면 좋은 기능</b>
       <ul>
-        <li>사이드바 상단에서 <b>성능 모드</b>(Lite~Max, 자동)를 바꿀 수 있습니다</li>
-        <li><b>설정 → 메모리</b>에 적어두면 모든 대화에서 항상 참고합니다</li>
+        <li>사이드바 상단에서 <b>성능 모드</b>(Lite~Max, 자동)와 <b>판단 강도</b>를 바꿀 수 있습니다</li>
+        <li>사이드바 하단 <b>메모리</b>에 적어두면 모든 대화에서 항상 참고합니다</li>
+        <li>프로젝트 우측 상단 ⚙ 버튼에서 <b>역할·지침·참고자료·공유</b>를 프로젝트별로 설정할 수 있습니다</li>
         <li><b>설정 → 연동</b>에서 구글 캘린더를 연결하면 채팅으로 일정을 추가/조회할 수 있습니다</li>
         <li>입력창 옆 마이크 아이콘으로 음성 입력이 가능합니다</li>
       </ul>
@@ -1316,7 +1386,8 @@ async function init() {
   userEmailEl.textContent = me.email;
   adminLink.hidden = !me.isAdmin;
   modeSelect.value = me.settings?.performanceMode || 'standard';
-  document.documentElement.setAttribute('data-theme', me.settings?.theme || 'light');
+  applyTheme(me.settings?.theme || 'light');
+  markActiveBtn(intensityToggle, me.settings?.pushbackIntensity || 'strong');
 
   const conversations = await renderProjectList();
   if (conversations.length === 0) {

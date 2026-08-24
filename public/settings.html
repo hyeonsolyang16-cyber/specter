@@ -29,71 +29,14 @@
 
   <main class="admin-content settings-layout">
     <nav class="settings-nav" id="settings-nav">
-      <button type="button" class="settings-nav-item active" data-tab="ai">AI 동작</button>
-      <button type="button" class="settings-nav-item" data-tab="memory">메모리</button>
-      <button type="button" class="settings-nav-item" data-tab="display">화면</button>
-      <button type="button" class="settings-nav-item" data-tab="integrations">연동</button>
+      <button type="button" class="settings-nav-item active" data-tab="integrations">연동</button>
       <button type="button" class="settings-nav-item" data-tab="account">계정</button>
     </nav>
 
     <div class="settings-panels">
-      <div class="settings-panel" data-panel="ai">
-        <section class="settings-section">
-          <h2>판단 강도</h2>
-          <p class="settings-desc">Specter가 얼마나 강하게 의견을 제시할지 정합니다.</p>
-          <div class="settings-options" id="intensity-options">
-            <button type="button" data-value="mild">약하게</button>
-            <button type="button" data-value="strong">강하게</button>
-          </div>
-        </section>
+      <p class="settings-desc">판단 강도·성능 모드·테마·메모리는 이제 채팅 화면 왼쪽 사이드바에서 바로 바꿀 수 있습니다.</p>
 
-        <section class="settings-section">
-          <h2>성능 모드</h2>
-          <p class="settings-desc">높을수록 더 깊이 생각하고 더 상위 모델을 쓰지만, 무료 사용량을 더 많이 소모하고 응답이 느려질 수 있습니다.</p>
-          <div class="settings-options" id="performance-options">
-            <button type="button" data-value="lite">Lite</button>
-            <button type="button" data-value="standard">Standard</button>
-            <button type="button" data-value="high">High</button>
-            <button type="button" data-value="max">Max</button>
-            <button type="button" data-value="auto">자동</button>
-          </div>
-          <ul class="settings-mode-desc">
-            <li><b>Lite</b> — 가장 빠르고 가벼움, 간단한 질문에 적합, 무료 사용량 가장 적게 사용</li>
-            <li><b>Standard</b> — 기본값, 대부분의 검토에 적합한 균형 모드</li>
-            <li><b>High</b> — 더 깊이 생각한 뒤 답변, 복잡한 의사결정 검토에 적합</li>
-            <li><b>Max</b> — 가장 최신 모델 + 최고 사고 강도, 가장 정교하지만 무료 사용량을 가장 많이 사용</li>
-            <li><b>자동</b> — 메시지 길이·첨부·대화 길이를 보고 매번 알맞은 등급을 자동으로 고릅니다</li>
-          </ul>
-        </section>
-      </div>
-
-      <div class="settings-panel" data-panel="memory" hidden>
-        <section class="settings-section">
-          <h2>메모리</h2>
-          <p class="settings-desc">여기 적어두면 모든 대화에서 항상 참고합니다. (최대 2000자, 추가 비용 없음)</p>
-          <form id="memory-form" class="settings-form">
-            <textarea id="memory-input" rows="4" maxlength="2000" placeholder="예: 나는 스타트업 대표고, 항상 리스크와 실행 가능성 위주로 검토해줘"></textarea>
-            <label class="settings-checkbox">
-              <input type="checkbox" id="auto-memory-toggle">
-              자동 메모리 — 대화 중 기억할 만한 내용을 Specter가 스스로 판단해 추가합니다 (메시지마다 가벼운 API 호출이 하나 더 발생해 무료 사용량을 더 씁니다)
-            </label>
-            <p id="memory-success" class="settings-success"></p>
-            <button type="submit">메모리 저장</button>
-          </form>
-        </section>
-      </div>
-
-      <div class="settings-panel" data-panel="display" hidden>
-        <section class="settings-section">
-          <h2>테마</h2>
-          <div class="settings-options" id="theme-options">
-            <button type="button" data-value="light">라이트</button>
-            <button type="button" data-value="dark">다크</button>
-          </div>
-        </section>
-      </div>
-
-      <div class="settings-panel" data-panel="integrations" hidden>
+      <div class="settings-panel" data-panel="integrations">
         <section class="settings-section">
           <h2>구글 캘린더</h2>
           <p class="settings-desc">연결하면 음성 명령("8월 25일 오후 2시에 미팅 추가해줘")으로 실제 구글 캘린더에 일정을 추가할 수 있습니다. 폰의 캘린더 앱·위젯과 자동으로 동기화됩니다.</p>

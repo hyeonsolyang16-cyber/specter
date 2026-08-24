@@ -173,14 +173,16 @@ async function getSettings(userId) {
   return { ...DEFAULT_SETTINGS, ...(user?.settings || {}) };
 }
 
+// JSONB의 || 병합 연산자로 DB에서 원자적으로 갱신한다. 이전에는 애플리케이션 레벨에서
+// 읽고-병합해서-쓰는 방식이라, 같은 유저의 설정 두 개가 거의 동시에 저장되면(예: 메모리
+// 내용 저장 + 자동 메모리 토글 저장을 Promise.all로 동시에 보낼 때) 나중에 쓰는 요청이
+// 먼저 쓴 요청의 값을 못 보고 덮어써버리는 경합 조건이 있었다.
 async function updateSettings(userId, patch) {
   await ready;
-  const current = await getSettings(userId);
-  const merged = { ...current, ...patch };
-  const { rows } = await pool.query('UPDATE users SET settings = $2 WHERE id = $1 RETURNING settings', [
-    userId,
-    JSON.stringify(merged),
-  ]);
+  const { rows } = await pool.query(
+    "UPDATE users SET settings = settings || $2::jsonb WHERE id = $1 RETURNING settings",
+    [userId, JSON.stringify(patch)]
+  );
   return rows[0]?.settings;
 }
 

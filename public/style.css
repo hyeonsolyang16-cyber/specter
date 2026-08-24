@@ -103,6 +103,27 @@ html, body {
 }
 .mode-select:focus { outline: none; border-color: var(--accent); }
 
+.sidebar-quick-row { display: flex; flex-direction: column; gap: 6px; }
+.sidebar-quick-row .mode-select { margin: 8px 0 0; }
+
+.intensity-toggle { display: flex; gap: 4px; }
+.intensity-toggle button {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.intensity-toggle button.active {
+  background: var(--accent-strong);
+  color: var(--on-accent);
+  border-color: var(--accent-strong);
+}
+
 .project-list {
   flex: 1;
   overflow-y: auto;
