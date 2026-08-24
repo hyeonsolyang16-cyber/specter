@@ -73,6 +73,7 @@ html, body {
 }
 .new-project-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; }
 .new-project-btn:hover { background: var(--accent); }
+.new-project-btn[hidden] { display: none; }
 
 .search-input {
   margin: 12px 0 2px;
@@ -281,6 +282,7 @@ html, body {
 }
 .reset-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .reset-btn:hover { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.reset-btn[hidden] { display: none; }
 
 .chat {
   flex: 1;
@@ -820,6 +822,7 @@ html, body {
 }
 .attach-btn:hover { color: var(--text); border-color: var(--accent); }
 .attach-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.attach-btn[hidden] { display: none; }
 
 .plus-btn { display: none; }
 .composer-extra { display: flex; gap: 10px; }
@@ -990,8 +993,12 @@ html, body {
 }
 .chat-header-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; }
 .chat-header-btn:hover { color: var(--text); border-color: var(--accent); }
+.chat-header-btn[hidden] { display: none; }
 
 /* ---- 프로젝트 설정 모달 ---- */
+/* [hidden] 규칙을 마지막에 더 높은 명시도로 둬야 한다. .modal-overlay { display: flex }가
+   같은 명시도의 UA [hidden] { display: none }보다 나중(author CSS)에 적용돼 hidden 속성을
+   무시하고 항상 화면을 덮어버리는 문제가 있었다. */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -1001,6 +1008,9 @@ html, body {
   justify-content: center;
   z-index: 50;
   padding: 16px;
+}
+.modal-overlay[hidden] {
+  display: none;
 }
 .modal-panel {
   background: var(--surface);
