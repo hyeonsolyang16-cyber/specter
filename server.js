@@ -251,13 +251,17 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
 // 개인용 앱(테스트 모드, 사용자 100명 미만)은 구글 인증 심사 없이 민감/제한 범위를
 // 그대로 쓸 수 있어서, 캘린더뿐 아니라 Gmail/Drive/할 일까지 한 번의 동의로 같이 받는다 —
 // 이 refresh_token 하나가 아래 모든 범위를 다 포함한다(DB 컬럼명은 예전 이름 그대로 둠).
+// gmail.readonly와 drive(전체)는 "제한(restricted)" 등급이라 유료 보안감사(CASA)
+// 없이는 테스트 사용자 화이트리스트를 벗어날 수 없다 — 대신 "민감(sensitive)" 등급까지만
+// 요청해서, 무료로 며칠 안에 끝나는 가벼운 심사만으로 전체 공개(테스트 사용자 등록 불필요)를
+// 받을 수 있게 한다. 그 대가로 메일함 전체 검색/읽기와 Drive 전체 검색은 뺐다 — 발송·캘린더·
+// 할 일은 그대로 유지된다. Drive를 다시 넣으려면 drive.file(비민감, 파일 피커로 사용자가
+// 직접 고른 파일만) 스코프 + 피커 UI를 새로 만들거나, 유료 CASA를 받아야 한다.
 const GOOGLE_ASSISTANT_SCOPES = [
   'openid',
   'email',
   'https://www.googleapis.com/auth/calendar.events',
-  'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/gmail.send',
-  'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/tasks',
 ].join(' ');
 
@@ -636,65 +640,8 @@ async function listCalendarEvents(accessToken, timeMin, timeMax) {
 }
 
 // ---- Gmail ----
-
-async function searchGmailMessages(accessToken, query, maxResults = 10) {
-  const params = new URLSearchParams({ q: query || 'in:inbox', maxResults: String(Math.min(maxResults, 20)) });
-  const listRes = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages?${params}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!listRes.ok) throw new Error(`메일 검색 실패(${listRes.status}): ${await listRes.text()}`);
-  const listData = await listRes.json();
-  const messages = listData.messages || [];
-  // 메시지 목록 API는 ID만 주기 때문에, 각 메일의 제목/보낸이/요약을 얻으려면 건별로 메타데이터를 더 불러와야 한다.
-  const details = await Promise.all(
-    messages.map(async (m) => {
-      const res = await fetch(
-        `https://www.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-      );
-      if (!res.ok) return null;
-      const data = await res.json();
-      const headers = Object.fromEntries((data.payload?.headers || []).map((h) => [h.name, h.value]));
-      return {
-        id: m.id,
-        subject: headers.Subject || '(제목 없음)',
-        from: headers.From || '',
-        date: headers.Date || '',
-        snippet: data.snippet || '',
-      };
-    })
-  );
-  return details.filter(Boolean);
-}
-
-function extractGmailBodyText(payload) {
-  if (!payload) return '';
-  if (payload.mimeType === 'text/plain' && payload.body?.data) {
-    return Buffer.from(payload.body.data, 'base64url').toString('utf-8');
-  }
-  for (const part of payload.parts || []) {
-    const text = extractGmailBodyText(part);
-    if (text) return text;
-  }
-  // 순수 텍스트 파트가 없으면(HTML 메일만 있는 경우) 최후 수단으로 최상위 body라도 시도한다.
-  if (payload.body?.data) return Buffer.from(payload.body.data, 'base64url').toString('utf-8');
-  return '';
-}
-
-async function readGmailMessage(accessToken, messageId) {
-  const res = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error(`메일 조회 실패(${res.status}): ${await res.text()}`);
-  const data = await res.json();
-  const headers = Object.fromEntries((data.payload?.headers || []).map((h) => [h.name, h.value]));
-  return {
-    subject: headers.Subject || '(제목 없음)',
-    from: headers.From || '',
-    date: headers.Date || '',
-    body: extractGmailBodyText(data.payload).slice(0, 6000),
-  };
-}
+// 메일 검색/읽기(gmail.readonly)는 "제한(restricted)" 등급이라 뺐다 — 발송(gmail.send)은
+// "민감(sensitive)" 등급이라 유지한다. 자세한 이유는 GOOGLE_ASSISTANT_SCOPES 주석 참고.
 
 async function sendGmailMessage(accessToken, { to, subject, body }) {
   // to는 헤더 줄에 그대로 들어가므로, 개행이 섞여 들어오면(모델이 프롬프트 인젝션에 낚여
@@ -717,46 +664,6 @@ async function sendGmailMessage(accessToken, { to, subject, body }) {
   });
   if (!res.ok) throw new Error(`메일 발송 실패(${res.status}): ${await res.text()}`);
   return res.json();
-}
-
-// ---- Drive ----
-
-async function searchDriveFiles(accessToken, query, maxResults = 10) {
-  const params = new URLSearchParams({
-    q: query ? `name contains '${query.replace(/'/g, "\\'")}' and trashed = false` : 'trashed = false',
-    pageSize: String(Math.min(maxResults, 20)),
-    fields: 'files(id,name,mimeType,modifiedTime,webViewLink)',
-    orderBy: 'modifiedTime desc',
-  });
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files?${params}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error(`Drive 검색 실패(${res.status}): ${await res.text()}`);
-  const data = await res.json();
-  return (data.files || []).map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, modifiedTime: f.modifiedTime, link: f.webViewLink }));
-}
-
-// 구글 문서/시트/슬라이드는 바로 다운로드가 안 되고 export 엔드포인트로 형식을 지정해 내보내야 한다.
-const DRIVE_EXPORT_MIME = {
-  'application/vnd.google-apps.document': 'text/plain',
-  'application/vnd.google-apps.spreadsheet': 'text/csv',
-  'application/vnd.google-apps.presentation': 'text/plain',
-};
-
-async function readDriveFileContent(accessToken, fileId) {
-  const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!metaRes.ok) throw new Error(`Drive 파일 조회 실패(${metaRes.status}): ${await metaRes.text()}`);
-  const meta = await metaRes.json();
-  const exportMime = DRIVE_EXPORT_MIME[meta.mimeType];
-  const url = exportMime
-    ? `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(exportMime)}`
-    : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!res.ok) throw new Error(`Drive 파일 내용 조회 실패(${res.status}): ${await res.text()}`);
-  const text = await res.text();
-  return { name: meta.name, content: text.slice(0, 8000) };
 }
 
 // ---- Google Tasks ----
@@ -818,27 +725,6 @@ const CALENDAR_FUNCTION_DECLARATIONS = [
     },
   },
   {
-    name: 'search_emails',
-    description:
-      '사용자의 Gmail에서 메일을 검색한다(제목/보낸이/요약만, 본문은 read_email로 별도 조회). "메일함 확인해줘", "누구한테 온 메일 있어?" 같은 요청에 사용한다.',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'Gmail 검색 문법(예: "is:unread", "from:someone@example.com"). 비워두면 받은편지함 최신순.' },
-        maxResults: { type: 'number', description: '최대 결과 수, 기본 10' },
-      },
-    },
-  },
-  {
-    name: 'read_email',
-    description: 'search_emails로 찾은 메일 ID로 본문 전체를 읽는다.',
-    parameters: {
-      type: 'object',
-      properties: { messageId: { type: 'string', description: 'search_emails 결과의 id' } },
-      required: ['messageId'],
-    },
-  },
-  {
     name: 'send_email',
     description: '사용자를 대신해 이메일을 발송한다. 사용자가 명시적으로 메일 발송/답장을 요청했을 때만 사용한다.',
     parameters: {
@@ -849,26 +735,6 @@ const CALENDAR_FUNCTION_DECLARATIONS = [
         body: { type: 'string' },
       },
       required: ['to', 'subject', 'body'],
-    },
-  },
-  {
-    name: 'search_drive_files',
-    description: '사용자의 Google Drive에서 파일을 이름으로 검색한다.',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: '파일명에 포함될 검색어. 비워두면 최근 수정 파일 목록.' },
-        maxResults: { type: 'number' },
-      },
-    },
-  },
-  {
-    name: 'read_drive_file',
-    description: 'search_drive_files로 찾은 파일 ID의 내용을 텍스트로 읽는다(문서/시트/슬라이드/일반 텍스트 파일).',
-    parameters: {
-      type: 'object',
-      properties: { fileId: { type: 'string', description: 'search_drive_files 결과의 id' } },
-      required: ['fileId'],
     },
   },
   {
@@ -940,26 +806,10 @@ function buildToolConfig(user) {
         const events = await listCalendarEvents(accessToken, args?.startDateTime, args?.endDateTime);
         return { events };
       }
-      if (name === 'search_emails') {
-        const emails = await searchGmailMessages(accessToken, args?.query, args?.maxResults);
-        return { emails };
-      }
-      if (name === 'read_email') {
-        if (!args?.messageId) return { error: 'messageId가 필요합니다.' };
-        return await readGmailMessage(accessToken, args.messageId);
-      }
       if (name === 'send_email') {
         if (!args?.to || !args?.subject || !args?.body) return { error: 'to, subject, body가 모두 필요합니다.' };
         await sendGmailMessage(accessToken, args);
         return { ok: true };
-      }
-      if (name === 'search_drive_files') {
-        const files = await searchDriveFiles(accessToken, args?.query, args?.maxResults);
-        return { files };
-      }
-      if (name === 'read_drive_file') {
-        if (!args?.fileId) return { error: 'fileId가 필요합니다.' };
-        return await readDriveFileContent(accessToken, args.fileId);
       }
       if (name === 'list_tasks') {
         const tasks = await listTasks(accessToken);
@@ -1374,9 +1224,9 @@ function buildFullSystemPrompt(settings, conversation, toolConfig) {
   prompt += `\n\n${timeContext}\n필요하면 구글 검색 도구로 최신 정보를 확인한 뒤 답하세요.`;
   if (toolConfig?.execute) {
     prompt +=
-      '\n캘린더·Gmail·Drive·할 일(Tasks) 도구를 쓸 수 있습니다. 일정 추가/조회, 메일 검색/읽기/발송, Drive 파일 검색/읽기, 할 일 조회/추가/완료 요청이면 반드시 해당 도구를 사용하세요. ' +
+      '\n캘린더·Gmail 발송·할 일(Tasks) 도구를 쓸 수 있습니다. 일정 추가/조회, 메일 발송, 할 일 조회/추가/완료 요청이면 반드시 해당 도구를 사용하세요. ' +
       '메일 발송처럼 되돌리기 어려운 조치는 사용자가 명시적으로 요청했을 때만 실행하고, 받는 사람·제목·내용을 요청 내용과 다르게 지어내지 마세요. ' +
-      '사용자가 받는사람/제목/내용을 이미 다 알려줬다면 검색 없이 바로 send_email을 호출하세요.';
+      '사용자가 받는사람/제목/내용을 이미 다 알려줬다면 바로 send_email을 호출하세요. 메일을 읽거나 검색하는 기능은 없으니, 요청받으면 없다고 안내하세요.';
   }
   return prompt;
 }

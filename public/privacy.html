@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>개인정보처리방침 - Specter</title>
+<link rel="icon" type="image/png" href="logo.png">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css">
+<link rel="stylesheet" href="style.css">
+<style>
+  .policy-page { max-width: 720px; margin: 0 auto; padding: 40px 24px 80px; }
+  .policy-page h1 { font-size: 22px; margin: 0 0 6px; }
+  .policy-meta { font-size: 12.5px; color: var(--text-muted); margin: 0 0 32px; }
+  .policy-page section { margin-bottom: 28px; }
+  .policy-page h2 { font-size: 15px; margin: 0 0 10px; }
+  .policy-page p, .policy-page li { font-size: 14px; line-height: 1.7; color: var(--text); }
+  .policy-page ul { margin: 0; padding-left: 20px; }
+  .policy-page li { margin-bottom: 6px; }
+  .policy-back { display: inline-block; margin-bottom: 24px; }
+</style>
+</head>
+<body>
+<div class="admin-page">
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark"><img src="logo.png" alt="Specter"></span>
+      <h1>개인정보처리방침</h1>
+    </div>
+    <div class="header-actions">
+      <a href="/" class="reset-btn">채팅으로</a>
+    </div>
+  </header>
+
+  <main class="policy-page">
+    <p class="policy-meta">시행일: 2026년 8월 28일</p>
+
+    <section>
+      <h2>1. 수집하는 정보</h2>
+      <p>Specter는 서비스 제공을 위해 다음 정보를 수집·저장합니다.</p>
+      <ul>
+        <li><strong>계정 정보</strong>: 이메일 주소, 비밀번호(암호화 저장). 구글 계정으로 가입/로그인한 경우 구글이 제공하는 이메일·계정 식별자.</li>
+        <li><strong>대화 내용</strong>: 사용자가 입력한 메시지, 첨부파일, AI 응답. 서비스 제공(AI 응답 생성, 대화 기록 보관)을 위해 저장됩니다.</li>
+        <li><strong>구글 연동 정보(선택)</strong>: 사용자가 직접 연결을 선택한 경우에만, 구글 캘린더·Gmail 발송·할 일(Tasks) 기능을 대신 수행하기 위한 접근 토큰(refresh token).</li>
+        <li><strong>이용 정보</strong>: AI 응답 생성에 사용된 토큰 사용량, 접속 기록(오류 로그 등 운영 목적).</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>2. 구글 사용자 데이터 이용 방식</h2>
+      <p>Specter가 구글 계정 연동으로 접근하는 정보는 아래 용도로만 사용하며, 사용자가 채팅으로 직접 요청한 작업을 수행하는 데만 씁니다.</p>
+      <ul>
+        <li><strong>캘린더</strong>: 사용자 요청에 따라 일정을 조회하거나 새 일정을 추가합니다.</li>
+        <li><strong>Gmail 발송</strong>: 사용자가 명시적으로 요청한 내용의 메일만 사용자를 대신해 발송합니다. 받는 사람의 메일함을 읽거나 사용자의 기존 메일을 조회하지 않습니다.</li>
+        <li><strong>할 일(Tasks)</strong>: 사용자 요청에 따라 할 일을 조회, 추가, 완료 처리합니다.</li>
+      </ul>
+      <p>이렇게 얻은 구글 사용자 데이터(캘린더 일정, 발송한 메일 내용, 할 일 목록)는 위 기능을 수행하는 목적 외에 광고, 프로파일링, 제3자 판매·공유에 사용하지 않으며, AI 모델 학습에도 사용하지 않습니다. Google API를 통해 얻은 정보의 Specter 이용은 <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API 서비스 사용자 데이터 정책(Limited Use 요건 포함)</a>을 따릅니다.</p>
+      <p>참고로 사용자가 채팅에 직접 입력한 메시지는 AI 응답 생성을 위해 Google Gemini API로 전송되며, 이는 위 구글 사용자 데이터(캘린더/메일/할 일)와는 별개로 <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener">Gemini API 약관</a>이 적용됩니다.</p>
+    </section>
+
+    <section>
+      <h2>3. 정보 저장 및 제3자 처리</h2>
+      <ul>
+        <li>모든 데이터는 Supabase(PostgreSQL) 데이터베이스에 저장되며, 서비스는 Render에서 호스팅됩니다.</li>
+        <li>AI 응답 생성을 위해 대화 내용이 Google Gemini API로 전송되어 처리됩니다.</li>
+        <li>구글 연동 기능은 Google API(Calendar, Gmail, Tasks)를 통해서만 처리되며, Specter는 접근 토큰을 서버에만 보관하고 사용자 동의 없이 제3자에게 제공하지 않습니다.</li>
+        <li>위 목적을 위한 처리 외에는 어떤 정보도 판매하거나 마케팅 목적으로 제3자와 공유하지 않습니다.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>4. 보관 기간 및 삭제</h2>
+      <p>사용자는 언제든 대화(프로젝트)를 삭제할 수 있으며, 삭제 시 휴지통을 거쳐 영구 삭제됩니다. 설정에서 구글 계정 연결을 해제하면 저장된 접근 토큰이 즉시 삭제됩니다. 계정 자체의 삭제를 원하시면 아래 문의처로 연락해주세요.</p>
+    </section>
+
+    <section>
+      <h2>5. 문의</h2>
+      <p>개인정보 처리에 관한 문의는 서비스 관리자에게 연락해주세요.</p>
+    </section>
+  </main>
+</div>
+</body>
+</html>
