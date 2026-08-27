@@ -163,10 +163,10 @@ function checkCalendarQueryParam() {
   const calendarParam = params.get('calendar');
   if (!calendarParam) return;
   const messages = {
-    connected: '구글 캘린더가 연결되었습니다.',
+    connected: '구글 계정이 연결되었습니다 (캘린더·Gmail·Drive·할 일).',
     no_refresh_token: '이미 한 번 연결한 적이 있어 다시 동의가 필요합니다. 구글 계정 설정에서 스펙터 접근 권한을 해제한 뒤 다시 시도해주세요.',
-    error: '구글 캘린더 연결에 실패했습니다.',
-    not_configured: '구글 로그인이 아직 설정되지 않아 캘린더 연동을 쓸 수 없습니다.',
+    error: '구글 계정 연결에 실패했습니다.',
+    not_configured: '구글 로그인이 아직 설정되지 않아 이 연동을 쓸 수 없습니다.',
   };
   if (messages[calendarParam]) {
     calendarStatus.textContent = messages[calendarParam];

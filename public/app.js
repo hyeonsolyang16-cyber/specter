@@ -1067,6 +1067,58 @@ const EXAMPLE_PROMPTS = [
   '이 주장을 뒷받침할 근거가 충분한지 확인해줘',
 ];
 
+// 홈 화면 위젯은 PWA로는 만들 수 없어서(iOS/Android 둘 다 네이티브 전용 기능), 그 대신
+// 앱을 열면 바로 오늘 일정+할 일이 보이게 한다. 구글 연동을 안 했거나 오늘 항목이
+// 없으면 카드 자체를 안 보여준다.
+async function renderTodayCard(container) {
+  const res = await fetch('/api/today');
+  if (!res.ok) return;
+  const data = await res.json();
+  if (!data.connected || (data.events.length === 0 && data.tasks.length === 0)) return;
+
+  const card = document.createElement('div');
+  card.className = 'today-card';
+  card.appendChild(el2('div', 'today-card-title', '오늘'));
+
+  for (const e of data.events) {
+    const row = el2('div', 'today-row');
+    const time = e.start?.includes('T')
+      ? new Date(e.start).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit' })
+      : '종일';
+    row.appendChild(el2('span', 'today-row-time', time));
+    row.appendChild(el2('span', 'today-row-label', e.title));
+    card.appendChild(row);
+  }
+  for (const t of data.tasks) {
+    const row = el2('div', 'today-row today-row-task');
+    row.appendChild(el2('span', 'today-row-time', '할 일'));
+    row.appendChild(el2('span', 'today-row-label', t.title));
+    card.appendChild(row);
+  }
+  container.prepend(card);
+}
+
+function el2(tag, className, text) {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+// 앱 아이콘에 오늘 남은 일정+할 일 개수를 배지로 표시한다(Badging API — Android는 대부분
+// 지원, iOS는 홈 화면에 설치된 경우에만 동작). 지원 안 하는 브라우저에서는 조용히 무시된다.
+async function updateAppBadge() {
+  if (!('setAppBadge' in navigator)) return;
+  try {
+    const res = await fetch('/api/today');
+    if (!res.ok) return;
+    const data = await res.json();
+    const count = (data.events?.length || 0) + (data.tasks?.length || 0);
+    if (count > 0) navigator.setAppBadge(count);
+    else navigator.clearAppBadge();
+  } catch {}
+}
+
 function renderEmptyState() {
   chat.innerHTML = '';
   const wrap = document.createElement('div');
@@ -1075,6 +1127,7 @@ function renderEmptyState() {
     <img src="logo.png" alt="Specter">
     <h2>무엇을 검토해드릴까요?</h2>
   `;
+  renderTodayCard(wrap);
   const prompts = document.createElement('div');
   prompts.className = 'empty-prompts';
   for (const p of EXAMPLE_PROMPTS) {
@@ -1098,7 +1151,7 @@ function renderEmptyState() {
         <li>입력창 아래에서 <b>성능 모드</b>(Lite~Max, 자동)와 <b>판단 강도</b>를 바꿀 수 있습니다</li>
         <li>사이드바 하단 <b>메모리</b>에 적어두면 모든 대화에서 항상 참고합니다</li>
         <li>프로젝트 우측 상단 ⚙ 버튼에서 <b>역할·지침·참고자료·공유</b>를 프로젝트별로 설정할 수 있습니다</li>
-        <li><b>설정 → 연동</b>에서 구글 캘린더를 연결하면 채팅으로 일정을 추가/조회할 수 있습니다</li>
+        <li><b>설정 → 연동</b>에서 구글 계정을 연결하면 채팅으로 일정·메일·Drive 파일·할 일까지 처리할 수 있습니다</li>
         <li>입력창 옆 마이크 아이콘으로 음성 입력이 가능합니다</li>
       </ul>
     `;
@@ -1657,6 +1710,7 @@ async function init() {
     await openConversation(conversations[0].id);
   }
   loadUsage();
+  updateAppBadge();
 }
 
 init();

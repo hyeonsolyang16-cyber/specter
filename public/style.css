@@ -817,6 +817,22 @@ html, body {
 }
 .empty-state img { width: 56px; height: 56px; border-radius: 14px; }
 .empty-state h2 { font-size: 16px; color: var(--text); margin: 0; }
+.today-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 4px;
+  text-align: left;
+}
+.today-card-title { font-size: 12px; font-weight: 700; color: var(--accent-strong); margin-bottom: 8px; letter-spacing: 0.02em; }
+.today-row { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; font-size: 13px; }
+.today-row-time { flex-shrink: 0; width: 44px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.today-row-label { color: var(--text); }
+.today-row-task .today-row-time { color: var(--accent); }
+
 .empty-prompts { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 420px; }
 .empty-prompt-btn {
   background: var(--surface);
