@@ -619,6 +619,19 @@ const CALENDAR_FUNCTION_DECLARATIONS = [
 // 실행할 필요 없음), 캘린더 도구는 연결한 유저에게만 추가한다.
 // 참고: 검색 도구와 커스텀 함수 도구를 한 요청에 같이 넣는 조합은 오늘 API 할당량 문제로
 // 라이브 검증을 못 했다 — 혹시 API가 이 조합을 거부하면 기존 에러 처리 경로(관리자 알림)로 잡힌다.
+// 이 계정/티어에서는 googleSearch 그라운딩 전용 할당량이 일반 생성 할당량과 별도이고
+// 계속 소진 상태다(실측: 도구 없이는 성공, googleSearch를 붙이면 매번 429). 검색이 꼭
+// 필요하지 않은 메시지까지 매번 이 할당량에 걸려 통째로 실패하지 않도록, 429가 나면
+// 검색 도구만 빼고 한 번 더 시도한다.
+function hasSearchTool(toolConfig) {
+  return !!toolConfig?.tools?.some((t) => t.googleSearch);
+}
+function stripSearchTool(toolConfig) {
+  if (!toolConfig) return toolConfig;
+  const tools = toolConfig.tools.filter((t) => !t.googleSearch);
+  return tools.length ? { ...toolConfig, tools } : null;
+}
+
 function buildToolConfig(user) {
   const tools = [{ googleSearch: {} }];
   if (!user?.googleCalendarRefreshToken) return { tools, execute: null };
@@ -1141,9 +1154,10 @@ async function streamAndRespond(req, res, contents, systemPrompt, mode, onComple
     aborted = true;
   });
 
-  let workingContents = contents;
-
-  try {
+  // 도구 호출 라운드 + 실제 스트리밍까지 한 번의 시도를 담당한다. 성공하면 응답을 끝까지
+  // 쓰고 리턴하고, 실패하면 던진다 — 상위에서 검색 도구를 뺀 재시도 여부를 판단한다.
+  async function runGeneration(activeToolConfig) {
+    let workingContents = contents;
     for (let round = 0; round < 3; round++) {
       const stream = await generateStreamWithFallback({
         model: mode.model,
@@ -1152,7 +1166,7 @@ async function streamAndRespond(req, res, contents, systemPrompt, mode, onComple
           systemInstruction: systemPrompt,
           maxOutputTokens: 4096,
           thinkingConfig: { thinkingLevel: mode.thinkingLevel },
-          ...(toolConfig ? { tools: toolConfig.tools } : {}),
+          ...(activeToolConfig ? { tools: activeToolConfig.tools } : {}),
         },
       });
 
@@ -1162,11 +1176,11 @@ async function streamAndRespond(req, res, contents, systemPrompt, mode, onComple
       let result = await iterator.next();
 
       const functionCalls = !result.done && result.value?.functionCalls;
-      if (toolConfig && functionCalls?.length) {
+      if (activeToolConfig && functionCalls?.length) {
         const call = functionCalls[0];
         let toolResult;
         try {
-          toolResult = await toolConfig.execute(call.name, call.args);
+          toolResult = await activeToolConfig.execute(call.name, call.args);
         } catch (err) {
           toolResult = { error: err.message || String(err) };
         }
@@ -1205,6 +1219,22 @@ async function streamAndRespond(req, res, contents, systemPrompt, mode, onComple
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     }
     res.end();
+  }
+
+  try {
+    try {
+      await runGeneration(toolConfig);
+    } catch (err) {
+      // 이 계정은 googleSearch 그라운딩 전용 할당량이 별도로 소진돼 있어(일반 생성은 멀쩡),
+      // 검색 도구가 붙은 요청만 계속 429가 난다. 아직 아무것도 안 보낸 상태라면(스트리밍
+      // 시작 전) 검색 도구만 빼고 한 번 더 시도해서, 검색이 꼭 필요하지 않은 메시지까지
+      // 매번 막히지 않게 한다.
+      if (!res.headersSent && err instanceof ApiError && err.status === 429 && hasSearchTool(toolConfig)) {
+        await runGeneration(stripSearchTool(toolConfig));
+        return;
+      }
+      throw err;
+    }
   } catch (err) {
     if (res.headersSent) {
       // 스트리밍이 이미 시작된 뒤라 일반 텍스트만 보낼 수 있다 — 여기서 끊는다.
