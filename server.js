@@ -248,23 +248,6 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails('mailto:admin@example.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 }
 
-app.get('/auth/google', (req, res) => {
-  if (!GOOGLE_CLIENT_ID || !GOOGLE_REDIRECT_URI) {
-    return res.redirect('/login.html?error=google_not_configured');
-  }
-  const params = new URLSearchParams({
-    client_id: GOOGLE_CLIENT_ID,
-    redirect_uri: GOOGLE_REDIRECT_URI,
-    response_type: 'code',
-    scope: 'openid email profile',
-    prompt: 'select_account',
-  });
-  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
-});
-
-// 캘린더 연동은 로그인과 별개의 동의(오프라인 접근 + 개인비서용 범위)가 필요하지만,
-// 콜백 주소는 그대로 재사용한다 — state로 어느 흐름인지 구분해서 구글 클라우드 콘솔에
-// 리디렉션 URI를 추가로 등록할 필요가 없게 했다.
 // 개인용 앱(테스트 모드, 사용자 100명 미만)은 구글 인증 심사 없이 민감/제한 범위를
 // 그대로 쓸 수 있어서, 캘린더뿐 아니라 Gmail/Drive/할 일까지 한 번의 동의로 같이 받는다 —
 // 이 refresh_token 하나가 아래 모든 범위를 다 포함한다(DB 컬럼명은 예전 이름 그대로 둠).
@@ -278,6 +261,31 @@ const GOOGLE_ASSISTANT_SCOPES = [
   'https://www.googleapis.com/auth/tasks',
 ].join(' ');
 
+// 예전엔 로그인(openid email profile)과 개인비서 연동(캘린더 등)이 완전히 분리돼 있어서,
+// "구글로 로그인"한 사람도 설정 화면까지 따로 찾아가 한 번 더 동의해야 연동이 됐다 —
+// 실제로 그렇게 하는 사람이 거의 없어 사실상 아무도 개인비서 기능을 못 쓰는 것과 같았다.
+// 이제 로그인 단계에서 같이 동의를 받는다: 첫 로그인이면 구글이 동의 화면을 보여주고
+// (그래야 법적으로 유효한 동의라) refresh_token도 이때 같이 내려준다. 이미 동의한
+// 적이 있는 재로그인이면 동의 화면 없이 조용히 넘어간다(매번 다시 물어보면 성가시다).
+app.get('/auth/google', (req, res) => {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_REDIRECT_URI) {
+    return res.redirect('/login.html?error=google_not_configured');
+  }
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    response_type: 'code',
+    scope: `${GOOGLE_ASSISTANT_SCOPES} profile`,
+    access_type: 'offline',
+    prompt: 'select_account',
+  });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+});
+
+// 설정에서 직접 (재)연결할 때 쓰는 경로 — 로그인 없이 이미 세션이 있는 상태에서
+// 호출되므로 항상 동의 화면을 강제한다(prompt=consent), 매번 새 refresh_token을 받기 위함.
+// 콜백 주소는 로그인 플로우와 그대로 공유한다 — state로 어느 흐름인지 구분해서 구글
+// 클라우드 콘솔에 리디렉션 URI를 추가로 등록할 필요가 없게 했다.
 app.get('/auth/google-calendar/connect', requireAuth, (req, res) => {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_REDIRECT_URI) {
     return res.redirect('/settings.html?calendar=not_configured');
@@ -333,6 +341,11 @@ app.get('/auth/google/callback', async (req, res) => {
     const user = await store.findOrCreateGoogleUser(payload.email.toLowerCase(), payload.sub);
     req.session.userId = user.id;
     req.session.isAdmin = isAdminEmail(user.email);
+    // 첫 로그인(또는 재동의)이라 구글이 refresh_token을 같이 내려줬다면, 로그인과 동시에
+    // 캘린더·Gmail·Drive·할 일 연동까지 끝난 것 — 설정에 따로 안 들어가도 된다.
+    if (tokenData.refresh_token) {
+      await store.saveGoogleCalendarToken(user.id, tokenData.refresh_token);
+    }
     res.redirect('/');
   } catch (err) {
     console.error('Google 로그인 실패:', err);

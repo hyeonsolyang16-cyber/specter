@@ -1038,6 +1038,41 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 .chat-header-title { font-size: 14px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.connect-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 24px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text);
+}
+.connect-banner-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.connect-banner-btn {
+  background: var(--accent-strong);
+  color: var(--on-accent);
+  padding: 7px 14px;
+  border-radius: 20px;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.connect-banner-btn:hover { background: var(--accent); }
+.connect-banner-dismiss {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 6px;
+}
+.connect-banner-dismiss:hover { color: var(--text); }
+.connect-banner[hidden] { display: none; }
 .chat-header-readonly {
   font-size: 11.5px;
   color: var(--accent-strong);

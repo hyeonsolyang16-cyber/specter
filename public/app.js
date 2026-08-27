@@ -23,6 +23,8 @@ const exportBtn = document.getElementById('export-btn');
 const exportMenu = document.getElementById('export-menu');
 const moreMenuBtn = document.getElementById('more-menu-btn');
 const moreMenu = document.getElementById('more-menu');
+const googleConnectBanner = document.getElementById('google-connect-banner');
+const googleConnectDismiss = document.getElementById('google-connect-dismiss');
 const usageDisplay = document.getElementById('usage-display');
 const sharedToggleBtn = document.getElementById('shared-toggle-btn');
 const chatHeaderTitle = document.getElementById('chat-header-title');
@@ -1693,6 +1695,24 @@ form.addEventListener('submit', async (e) => {
   await handleChatResponse(res, pending, text);
 });
 
+// 이메일/비밀번호로 가입한 사람은 로그인 단계에서 구글 동의를 같이 받을 방법이 없어서,
+// 설정에 따로 들어가야만 연동을 찾을 수 있었다 — 대신 앱 상단에 바로 눈에 띄게 배너로
+// 안내한다. "나중에"를 누르면 3일간 다시 안 보이게 하고, 아예 안 눌러도 매번 뜬다
+// (귀찮게 하려는 게 아니라, 연동 안 한 상태를 계속 방치하지 않게 하려는 의도).
+const GOOGLE_BANNER_SNOOZE_KEY = 'specter_google_banner_snoozed_until';
+async function checkGoogleConnectBanner() {
+  const snoozedUntil = Number(localStorage.getItem(GOOGLE_BANNER_SNOOZE_KEY) || 0);
+  if (Date.now() < snoozedUntil) return;
+  const res = await fetch('/api/calendar/status');
+  if (!res.ok) return;
+  const { connected } = await res.json();
+  googleConnectBanner.hidden = connected;
+}
+googleConnectDismiss.addEventListener('click', () => {
+  localStorage.setItem(GOOGLE_BANNER_SNOOZE_KEY, String(Date.now() + 3 * 24 * 60 * 60 * 1000));
+  googleConnectBanner.hidden = true;
+});
+
 async function init() {
   const meRes = await fetch('/api/me');
   if (meRes.status === 401) return (location.href = '/login.html');
@@ -1702,6 +1722,7 @@ async function init() {
   modeSelect.value = me.settings?.performanceMode || 'standard';
   applyTheme(me.settings?.theme || 'light');
   markActiveBtn(intensityToggle, me.settings?.pushbackIntensity || 'strong');
+  checkGoogleConnectBanner();
 
   const conversations = await renderProjectList();
   if (conversations.length === 0) {
