@@ -561,6 +561,7 @@ if (SpeechRecognitionCtor) {
   recognition.addEventListener('end', () => {
     isRecording = false;
     micBtn.classList.remove('recording');
+    form.requestSubmit();
   });
   recognition.addEventListener('error', () => {
     isRecording = false;
@@ -1146,7 +1147,7 @@ function renderEmptyState() {
         <li>사이드바 하단 <b>메모리</b>에 적어두면 모든 대화에서 항상 참고합니다</li>
         <li>프로젝트 우측 상단 ⚙ 버튼에서 <b>역할·지침·참고자료·공유</b>를 프로젝트별로 설정할 수 있습니다</li>
         <li><b>설정 → 연동</b>에서 구글 계정을 연결하면 채팅으로 일정·메일 발송·할 일까지 처리할 수 있습니다</li>
-        <li>입력창 옆 마이크 아이콘으로 음성 입력이 가능합니다</li>
+        <li>입력창 옆 마이크 아이콘으로 음성 입력이 가능합니다 — 말을 멈추면 자동으로 전송됩니다</li>
       </ul>
     `;
     const dismissBtn = document.createElement('button');
