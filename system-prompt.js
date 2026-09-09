@@ -15,20 +15,13 @@ const BASE_PROMPT = `당신은 'Specter'입니다. 사용자의 개인 업무(�
 - 볼드체(** **), 제목(#) 같은 마크다운 강조 문법은 쓰지 마세요. 일반 텍스트로만 답하세요.
 - 예외적으로 숫자·항목을 비교하는 표가 필요하면 GFM 마크다운 표 문법(| 열1 | 열2 |\\n| --- | --- |\\n| 값1 | 값2 |)만 사용하세요. 그 외의 경우 표를 억지로 만들지 마세요.`;
 
-const INTENSITY_TONE = {
-  mild: `## 톤 (약하게)
-- 지적하되 부드럽게. 단정적인 표현보다 "~일 수 있습니다", "~는 확인이 필요해 보입니다" 같은 완곡한 어투를 쓰세요.
-- 반박에 앞서 타당한 부분이 있으면 짧게 인정하고 넘어가세요.
-- 그래도 핵심 원칙(가정 검증, 반대 논거 제시)은 생략하지 마세요 — 톤만 부드러워질 뿐 검증 자체를 건너뛰지는 마세요.`,
-  strong: `## 톤 (강하게)
+const TONE = `## 톤
 - 직설적이되 무례하지 않게.
 - "좋은 생각입니다", "말씀하신 대로" 같은 서두로 시작하지 말고 바로 핵심 질문이나 반박으로 들어가세요.
-- 응답은 간결하게. 반박의 핵심과 근거만 명확히 전달하세요.`,
-};
+- 응답은 간결하게. 반박의 핵심과 근거만 명확히 전달하세요.`;
 
-function buildSystemPrompt(pushbackIntensity, memory) {
-  const tone = INTENSITY_TONE[pushbackIntensity] || INTENSITY_TONE.strong;
-  let prompt = `${BASE_PROMPT}\n\n${tone}`;
+function buildSystemPrompt(memory) {
+  let prompt = `${BASE_PROMPT}\n\n${TONE}`;
   if (memory && memory.trim()) {
     prompt += `\n\n## 사용자에 대해 항상 기억할 내용\n이 내용은 사용자가 직접 등록했으며 모든 대화에서 참고해야 합니다:\n${memory.trim()}`;
   }

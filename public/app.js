@@ -44,7 +44,6 @@ const shareBtn = document.getElementById('share-btn');
 const shareList = document.getElementById('share-list');
 const templateBtn = document.getElementById('template-btn');
 const templateMenu = document.getElementById('template-menu');
-const intensityToggle = document.getElementById('intensity-toggle');
 const themeToggleBtn = document.getElementById('theme-toggle-btn');
 const memoryQuickBtn = document.getElementById('memory-quick-btn');
 const memoryModal = document.getElementById('memory-modal');
@@ -70,13 +69,6 @@ function markActiveBtn(container, value) {
     btn.classList.toggle('active', btn.dataset.value === value);
   }
 }
-
-intensityToggle.addEventListener('click', (e) => {
-  const btn = e.target.closest('button');
-  if (!btn) return;
-  markActiveBtn(intensityToggle, btn.dataset.value);
-  saveSetting('pushbackIntensity', btn.dataset.value);
-});
 
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
@@ -1150,7 +1142,7 @@ function renderEmptyState() {
     tips.innerHTML = `
       <b>알아두면 좋은 기능</b>
       <ul>
-        <li>입력창 아래에서 <b>성능 모드</b>(Lite~Max, 자동)와 <b>판단 강도</b>를 바꿀 수 있습니다</li>
+        <li>입력창 아래에서 <b>성능 모드</b>(Lite~Max, 자동)를 바꿀 수 있습니다</li>
         <li>사이드바 하단 <b>메모리</b>에 적어두면 모든 대화에서 항상 참고합니다</li>
         <li>프로젝트 우측 상단 ⚙ 버튼에서 <b>역할·지침·참고자료·공유</b>를 프로젝트별로 설정할 수 있습니다</li>
         <li><b>설정 → 연동</b>에서 구글 계정을 연결하면 채팅으로 일정·메일 발송·할 일까지 처리할 수 있습니다</li>
@@ -1721,7 +1713,6 @@ async function init() {
   adminLink.hidden = !me.isAdmin;
   modeSelect.value = me.settings?.performanceMode || 'standard';
   applyTheme(me.settings?.theme || 'light');
-  markActiveBtn(intensityToggle, me.settings?.pushbackIntensity || 'strong');
   checkGoogleConnectBanner();
 
   const conversations = await renderProjectList();

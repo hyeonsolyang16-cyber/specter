@@ -13,7 +13,6 @@ const pool = new Pool({
 
 const DEFAULT_SETTINGS = {
   performanceMode: 'standard',
-  pushbackIntensity: 'strong',
   theme: 'light',
   memory: '',
   autoMemory: false,

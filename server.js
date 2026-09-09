@@ -371,7 +371,6 @@ app.get('/api/me', requireAuth, async (req, res) => {
 });
 
 const VALID_PERFORMANCE_MODES = [...Object.keys(PERFORMANCE_MODES), 'auto'];
-const VALID_INTENSITIES = ['mild', 'strong'];
 const VALID_THEMES = ['light', 'dark'];
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -436,7 +435,7 @@ app.get('/api/settings', requireAuth, async (req, res) => {
 const MAX_MEMORY_LENGTH = 2000;
 
 app.post('/api/settings', requireAuth, async (req, res) => {
-  const { performanceMode, pushbackIntensity, theme, memory, autoMemory } = req.body || {};
+  const { performanceMode, theme, memory, autoMemory } = req.body || {};
   const patch = {};
   if (memory !== undefined) {
     if (typeof memory !== 'string' || memory.length > MAX_MEMORY_LENGTH) {
@@ -452,12 +451,6 @@ app.post('/api/settings', requireAuth, async (req, res) => {
       return res.status(400).json({ error: '유효하지 않은 performanceMode 입니다.' });
     }
     patch.performanceMode = performanceMode;
-  }
-  if (pushbackIntensity !== undefined) {
-    if (!VALID_INTENSITIES.includes(pushbackIntensity)) {
-      return res.status(400).json({ error: '유효하지 않은 pushbackIntensity 입니다.' });
-    }
-    patch.pushbackIntensity = pushbackIntensity;
   }
   if (theme !== undefined) {
     if (!VALID_THEMES.includes(theme)) {
@@ -1216,7 +1209,7 @@ async function checkDailyCap(userId) {
 // 기본 시스템 프롬프트 + 프로젝트별 페르소나/커스텀 지침 + 현재 시각(검색 결과의 날짜 판단에 필요) +
 // (연결된 경우) 캘린더 도구 안내를 합쳐 최종 시스템 프롬프트를 만든다.
 function buildFullSystemPrompt(settings, conversation, toolConfig) {
-  let prompt = buildSystemPrompt(settings.pushbackIntensity, settings.memory);
+  let prompt = buildSystemPrompt(settings.memory);
   if (conversation.persona && PERSONA_PROMPTS[conversation.persona]) {
     prompt += `\n\n${PERSONA_PROMPTS[conversation.persona]}`;
   }
