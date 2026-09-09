@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
@@ -188,9 +189,11 @@ const authLimiter = rateLimit({
   message: { error: '시도 횟수가 너무 많습니다. 잠시 후 다시 시도해주세요.' },
 });
 
-// 로그인 안 된 사용자가 채팅/관리자 페이지로 바로 들어오면 로그인 화면으로 보낸다.
+// 로그인 안 된 사용자가 채팅/관리자 페이지로 바로 들어오면 로그인 화면을 보여준다.
+// 리디렉션(302) 대신 같은 URL("/")에서 바로 렌더링해야, 구글 OAuth 브랜딩 심사처럼
+// 리디렉션을 따라가지 않는 크롤러도 홈페이지 내용(메타 태그 등)을 그대로 읽을 수 있다.
 app.get('/', noStore, (req, res, next) => {
-  if (!req.session.userId) return res.redirect('/login.html');
+  if (!req.session.userId) return res.sendFile(path.join(__dirname, 'public', 'login.html'));
   next();
 });
 app.get('/admin.html', noStore, (req, res, next) => {
